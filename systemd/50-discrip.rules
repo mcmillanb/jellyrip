@@ -9,3 +9,15 @@ polkit.addRule(function(action, subject) {
         }
     }
 });
+
+// ...and shut down or restart the Pi (web app's Shut down / Restart buttons),
+// even while someone is logged in over SSH.
+polkit.addRule(function(action, subject) {
+    if (subject.user == "@OWNER@" &&
+        ["org.freedesktop.login1.power-off",
+         "org.freedesktop.login1.power-off-multiple-sessions",
+         "org.freedesktop.login1.reboot",
+         "org.freedesktop.login1.reboot-multiple-sessions"].indexOf(action.id) >= 0) {
+        return polkit.Result.YES;
+    }
+});

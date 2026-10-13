@@ -1,0 +1,66 @@
+#!/usr/bin/env python3
+"""Keep the Pi's board LEDs off while discrip runs, and turn them back on at shutdown.
+
+Run as root by discrip-leds.service: "leds off" at boot, "leds on" when the
+service stops at shutdown or reboot. With the LEDs dark in normal use, their
+coming back on shows the Pi is shutting down: once the green ACT light stops
+flickering it is safe to unplug. Which LEDs: [leds] off in discrip.toml.
+
+Usage: leds off | leds on
+"""
+import json
+import logging
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+import discrip  # noqa: E402
+
+log = logging.getLogger("leds")
+LEDS = Path("/sys/class/leds")
+# Triggers to restore if the ones saved by "leds off" are lost (Pi 4 defaults).
+DEFAULT_TRIGGER = {"ACT": "mmc0", "PWR": "default-on"}
+
+
+def trigger(led):
+    """The LED's current trigger: the bracketed word in its trigger file."""
+    for word in (led / "trigger").read_text().split():
+        if word.startswith("["):
+            return word.strip("[]")
+    return None
+
+
+def main():
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    if len(sys.argv) != 2 or sys.argv[1] not in ("off", "on"):
+        sys.exit(__doc__.split("Usage: ")[1])
+    cfg = discrip.load_config()
+    saved_path = Path(cfg["paths"]["run_dir"]) / "leds.json"
+
+    if sys.argv[1] == "off":
+        saved = {}
+        for name in cfg["leds"]["off"]:
+            led = LEDS / name
+            if not led.exists():
+                log.warning("no LED %s in %s", name, LEDS)
+                continue
+            current = trigger(led)
+            saved[name] = current if current and current != "none" else DEFAULT_TRIGGER.get(name)
+            (led / "trigger").write_text("none")
+            (led / "brightness").write_text("0")
+            log.info("%s off (was %s)", name, current)
+        saved_path.write_text(json.dumps(saved))
+    else:
+        try:
+            saved = json.loads(saved_path.read_text())
+        except (FileNotFoundError, json.JSONDecodeError):
+            saved = {n: DEFAULT_TRIGGER.get(n) for n in cfg["leds"]["off"]}
+        for name, trig in saved.items():
+            led = LEDS / name
+            if led.exists() and trig:
+                (led / "trigger").write_text(trig)
+                log.info("%s back on (%s)", name, trig)
+
+
+if __name__ == "__main__":
+    main()

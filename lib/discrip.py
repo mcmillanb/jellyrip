@@ -61,6 +61,15 @@ DEFAULTS = {
         "jellyfin_popup": True,    # pop up prompts and failures in open Jellyfin apps
         "popup_seconds": 0,        # 0: a dialog that stays until OK; >0: a brief toast
     },
+    "power": {
+        # Momentary button between this GPIO and GND: hold 5 s to shut down; a
+        # press also starts a halted Pi, but only on GPIO 3 (header pins 5 and 6).
+        "button_gpio": 3,          # 0: no button
+    },
+    "leds": {
+        "off": ["ACT", "PWR"],     # board LEDs (/sys/class/leds) kept off while running
+        "ethernet_off": False,     # also the Ethernet socket's LEDs (boot config, reboot)
+    },
     "jellyfin": {
         "url": "http://localhost:8096",
         "api_key": "",             # Dashboard -> API Keys; empty disables refreshes

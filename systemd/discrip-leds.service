@@ -1,0 +1,13 @@
+[Unit]
+Description=discrip: board LEDs off while running, back on at shutdown
+After=systemd-tmpfiles-setup.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Root: /sys/class/leds is root-only.
+ExecStart=/opt/discrip/bin/leds off
+ExecStop=/opt/discrip/bin/leds on
+
+[Install]
+WantedBy=multi-user.target

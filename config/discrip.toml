@@ -43,6 +43,19 @@ codec = "h264"             # "h264" plays everywhere; "h265" is ~1/3 smaller, ~2
 keep_originals = false     # true keeps each MPEG-2 file in /srv/media/_originals
 max_temp = 75              # pause above this CPU temperature
 
+[power]
+# A momentary button between this GPIO and GND (header pins 5 and 6 for GPIO 3).
+# Hold it 5 s to shut down; a short press does nothing, so a knock can't cancel a
+# rip. Pressing it also starts a halted Pi, but only on GPIO 3. 0 = no button.
+# Changes take effect after re-running setup/03-discrip.sh and rebooting.
+button_gpio = 3
+
+[leds]
+# Board LEDs kept off while discrip runs (names in /sys/class/leds). They come
+# back on at shutdown: once the green one stops flickering it's safe to unplug.
+off = ["ACT", "PWR"]
+ethernet_off = false       # true also turns off the Ethernet socket's LEDs (needs a reboot)
+
 [web]
 port = 8080
 token = ""                 # shared secret for the web app's buttons; 03-discrip.sh fills it in

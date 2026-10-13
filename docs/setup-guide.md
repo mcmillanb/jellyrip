@@ -254,7 +254,35 @@ How the pill behaves:
 - If Jellyfin is ever switched to **HTTPS**, the browser will block the pill, because it loads from plain `http://…:8080`. The web app can serve HTTPS with the same certificate as Jellyfin (not built yet: it needs a cert and key setting for Flask). The snippet already follows Jellyfin's protocol, so it wouldn't need changing.
 - The pill finds Jellyfin's header by its layout, which can change between Jellyfin versions. If it ends up floating at the top centre instead of sitting in the header, `journalctl -u discrip-web | grep pill=` shows what it found.
 
-### 11. Check it all works
+### 11. Power button and LEDs
+
+`03-discrip.sh` sets both up from `[power]` and `[leds]` in the config.
+
+**The button:** wire a momentary push button (normally open) between **GPIO 3 and GND, header pins 5 and 6**. These are the third pair of pins from the SD-card end; pin 5 is on the inner row. Then:
+
+- **hold it 5 s to shut down**; a short press does nothing, so a knock can't cancel a rip;
+- **press it to start a shut-down Pi again**. Only GPIO 3 can wake the Pi, which is why it's the default.
+
+How it works:
+
+1. The `gpio-shutdown` overlay in `/boot/firmware/config.txt` turns the button into a power key. The setup keeps the original file as `config.txt.discrip-orig`.
+2. `/etc/systemd/logind.conf.d/50-discrip-button.conf` makes a 5 s hold shut the Pi down.
+3. Shutdown stops discrip cleanly: a rip in progress is cancelled and its partial files deleted, and an encode restarts its file next night.
+
+The overlay needs one reboot after the first install. Wire the button with the Pi **off**:
+
+- **pin 4, right next to pin 6, is 5 V**, and touching it to pin 5 can destroy the GPIO;
+- GPIO 3 is also the I2C clock, so leave I2C off (the default).
+
+**The web app** has the same controls under More → Power: *Shut down* and *Restart*. If a disc is ripping it asks again first, because the rip will be cancelled.
+
+**The LEDs:** the red power LED and the green activity LED are turned off at boot by `discrip-leds.service`. **They come back on while the Pi shuts down**, so the case stays dark normally, and when you shut down you can see when it's done: **unplug once the green light stops flickering.**
+
+- `[leds] off` chooses which LEDs.
+- `[leds] ethernet_off = true` also darkens the Ethernet socket's LEDs. This is off by default because they're the quickest network check. It needs a reboot.
+- While booting, the LEDs behave normally until discrip starts, which helps when diagnosing a Pi that won't boot.
+
+### 12. Check it all works
 
 ```bash
 journalctl -fu discrip-watcher -u discrip-rip       # watch a rip
@@ -339,6 +367,7 @@ discrip runs as one Linux user, which also owns the library and is the Samba log
 
 ## Known gaps
 
+- **Power button:** the overlay and the 5 s hold are set up, but haven't been tried with a real button yet.
 - **Thermal test:** the build has not been thermally tested in its final case (spec step 11). Use the temperature chart during a rip plus a stream, and during an overnight encode.
 - **Untested paths:** not yet seen on real discs:
   - the junk-label `_inbox` path;

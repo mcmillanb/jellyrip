@@ -151,6 +151,12 @@ pre { white-space: pre-wrap; word-break: break-all; font-size: 12px; line-height
       <div id="known"></div></details>
   </div>
   <div class="card">
+    <details id="power-d"><summary><b>Power</b> <span class="muted">(or hold the button 5 s)</span></summary>
+      <div class="sub" style="margin-top:8px">Shut down before unplugging. The board lights come back on while it shuts down; unplug once the green one stops flickering. Press the button to start it again.</div>
+      <div class="row"><button id="b-reboot">Restart</button><button class="danger" id="b-poweroff">Shut down</button></div>
+    </details>
+  </div>
+  <div class="card">
     <details id="token-d"><summary><b>Access token</b> <span class="muted" id="token-state"></span></summary>
       <label for="token">Needed for the buttons. It is in /opt/discrip/discrip.toml under [web].</label>
       <input type="password" id="token" autocomplete="off">
@@ -533,16 +539,48 @@ $("#enc-save").onclick = (ev) => act(ev.target, () => api("POST", "/api/encode",
   codec: document.querySelector("input[name=enc-codec]:checked").value,
 }), "Saved: the encoder picks it up within 15 s");
 
+// ---------------------------------------------------------------- power
+let powerMsg = null;  // shown instead of "Can't reach discrip" after a shutdown/restart
+let powerWentDown = false;
+async function power(btn, action) {
+  const verb = action === "reboot" ? "Restart" : "Shut down";
+  if (!confirm(`${verb} discrip?`)) return;
+  let force = false;
+  for (;;) {
+    try {
+      btn.disabled = true;
+      await api("POST", "/api/power", { action, force });
+      break;
+    } catch (e) {
+      btn.disabled = false;
+      if (!force && /rip is running/.test(e.message) &&
+          confirm(`A disc is ripping and the rip will be cancelled. ${verb} anyway?`)) { force = true; continue; }
+      toast(e.message);
+      return;
+    }
+  }
+  powerMsg = action === "reboot"
+    ? "Restarting: this page reconnects by itself in a minute or two."
+    : "Shutting down. Unplug once the green light on the Pi stops flickering; press the button to start it again.";
+  $("#banners").innerHTML = `<div class="banner info">${esc(powerMsg)}</div>`;
+}
+$("#b-reboot").onclick = (ev) => power(ev.target, "reboot");
+$("#b-poweroff").onclick = (ev) => power(ev.target, "poweroff");
+
 // ---------------------------------------------------------------- loop
 async function poll() {
   try {
     const s = await api("GET", "/api/status");
     last = s;
     renderChips(s); renderBanners(s); renderNow(s); renderQueue(s); renderEncode(s);
+    if (powerMsg && powerWentDown && !/^Shutting/.test(powerMsg)) powerMsg = null;  // back after a restart
+    if (powerMsg) $("#banners").insertAdjacentHTML("afterbegin", `<div class="banner info">${esc(powerMsg)}</div>`);
     const jid = s.last_job && s.last_job.id;
     if (jid !== lastJobId) { lastJobId = jid; refreshHistory(); }
   } catch (e) {
-    $("#banners").innerHTML = `<div class="banner bad">Can't reach discrip: ${esc(e.message)}</div>`;
+    if (powerMsg) powerWentDown = true;
+    $("#banners").innerHTML = powerMsg ? `<div class="banner info">${esc(powerMsg)}</div>`
+      : `<div class="banner bad">Can't reach discrip: ${esc(e.message)}</div>`;
   }
 }
 showTokenState();

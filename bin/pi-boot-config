@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""Write discrip's block in the Pi's boot config (/boot/firmware/config.txt).
+
+Run as root by setup/03-discrip.sh. From discrip.toml:
+  [power] button_gpio   dtoverlay=gpio-shutdown: the button sends KEY_POWER, and
+                        logind (50-discrip-button.conf) shuts down on a 5 s hold
+  [leds] ethernet_off   dtparam=eth_led0/eth_led1=4 (off on a Pi 4 or 5)
+The block sits between "# BEGIN discrip" and "# END discrip" at the end of the
+file and is replaced on every run. Prints "reboot needed" when it changed.
+"""
+import os
+import shutil
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+import discrip  # noqa: E402
+
+CONFIG = Path("/boot/firmware/config.txt")
+BEGIN = "# BEGIN discrip (written by setup/03-discrip.sh from /opt/discrip/discrip.toml)"
+END = "# END discrip"
+
+
+def block(cfg):
+    lines = []
+    gpio = int(cfg["power"]["button_gpio"])
+    if gpio:
+        lines.append(f"dtoverlay=gpio-shutdown,gpio_pin={gpio}")
+    if cfg["leds"]["ethernet_off"]:
+        lines += ["dtparam=eth_led0=4", "dtparam=eth_led1=4"]
+    if not lines:
+        return ""
+    return "\n".join([BEGIN, "[all]", *lines, END]) + "\n"
+
+
+def main():
+    if not CONFIG.exists():
+        print(f"no {CONFIG}: not a Raspberry Pi, nothing to do")
+        return
+    cfg = discrip.load_config()
+    text = CONFIG.read_text()
+    if BEGIN in text:
+        head, _, rest = text.partition(BEGIN)
+        _, _, tail = rest.partition(END + "\n")
+        text_without = head.rstrip("\n") + "\n" + tail
+    else:
+        text_without = text
+    new = block(cfg)
+    result = text_without.rstrip("\n") + "\n" + ("\n" + new if new else "")
+    if result == text:
+        print(f"{CONFIG}: unchanged")
+        return
+    backup = CONFIG.with_name("config.txt.discrip-orig")
+    if not backup.exists():
+        shutil.copy2(CONFIG, backup)
+    tmp = CONFIG.with_name("config.txt.discrip-tmp")
+    tmp.write_text(result)
+    os.replace(tmp, CONFIG)
+    print(f"{CONFIG}: updated (original kept as {backup.name}); reboot needed")
+    print(new or "(discrip block removed)")
+
+
+if __name__ == "__main__":
+    main()

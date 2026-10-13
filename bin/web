@@ -223,6 +223,24 @@ def start():
     return jsonify(ok=True, started=True)
 
 
+@app.post("/api/power")
+def power():
+    """{"action": "poweroff"|"reboot", "force": bool}. Refuses while a rip runs
+    unless forced (the rip is then cancelled by the shutdown)."""
+    require_token()
+    b = body()
+    action = b.get("action")
+    if action not in ("poweroff", "reboot"):
+        abort(400, "action must be poweroff or reboot")
+    if ripping() and not b.get("force"):
+        abort(409, "a rip is running")
+    log.warning("%s requested from the web app (%s)", action, request.remote_addr)
+    r = subprocess.run(["systemctl", action], capture_output=True, text=True, timeout=30)
+    if r.returncode:
+        abort(500, r.stderr.strip() or f"systemctl {action} failed")
+    return jsonify(ok=True)
+
+
 @app.post("/api/pending/<pid>/answer")
 def answer(pid):
     require_token()

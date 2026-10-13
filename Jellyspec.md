@@ -304,6 +304,12 @@ Auth and exposure:
 - Trigger a library scan after a successful move (Jellyfin API with an API key from config), or rely on the scheduled/real-time monitor. Decide in 11.
 - Samba shares `/srv/media` (read/write for one authenticated user, so renames and manual tagging work from a laptop). No guest write.
 
+### Power button and LEDs
+
+- A momentary button between GPIO 3 and GND (header pins 5 and 6). The `gpio-shutdown` overlay (`[power] button_gpio`, written to `/boot/firmware/config.txt` by `bin/pi-boot-config`) makes it a power key. logind (`50-discrip-button.conf`) shuts down on a 5 s hold and ignores short presses. GPIO 3 also wakes a halted Pi.
+- The web app's `POST /api/power {"action": "poweroff"|"reboot", "force"}` (token) runs `systemctl poweroff|reboot`, allowed by the polkit rule. It refuses while a rip runs unless `force`.
+- `discrip-leds.service` (root) turns the `[leds] off` LEDs (ACT, PWR) off at boot and restores their triggers when stopped at shutdown, which shows that a shutdown is under way. `[leds] ethernet_off` adds `dtparam=eth_led0/1=4`.
+
 ## 11. Open decisions (resolve with the user before or during build)
 
 1. Default `--minlength` and the film/season duration thresholds in 7.1.1. Validate against a few real discs and tune. (Defaults set in step 5; still to validate against a real season disc.)
