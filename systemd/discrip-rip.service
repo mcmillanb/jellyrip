@@ -5,6 +5,8 @@ RequiresMountsFor=/srv /var/lib/discrip
 [Service]
 Type=oneshot
 User=@OWNER@
+# Library files: owner+group writable (Samba user), not world-writable.
+UMask=0002
 ExecStart=/opt/discrip/bin/dispatch
 # Kill the whole process group (makemkvcon included) on stop/cancel.
 KillMode=control-group

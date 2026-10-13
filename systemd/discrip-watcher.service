@@ -5,6 +5,7 @@ RequiresMountsFor=/srv /var/lib/discrip
 [Service]
 Type=notify
 User=@OWNER@
+UMask=0002
 ExecStart=/opt/discrip/bin/watcher
 Restart=always
 RestartSec=5
