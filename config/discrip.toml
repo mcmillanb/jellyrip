@@ -29,6 +29,10 @@ min_free_gb = 25         # refuse to rip below this much free space in [paths] m
 url = "http://localhost:8096"
 api_key = ""               # Dashboard -> API Keys; empty disables refreshes
 
+[notify]
+jellyfin_popup = true      # pop up prompts and failures in open Jellyfin apps (web, phone)
+popup_seconds = 30
+
 [state]
 history_max = 50         # jobs kept in state.json history
 
@@ -43,6 +47,7 @@ max_candidates = 12        # more titles than this: ask instead of guessing (dec
 duplicate_tolerance = 0.02 # more than one title this close to the longest: ask
 scan_timeout = 1800        # protected discs take up to ~15 min to scan
 rip_timeout = 14400
+tv_confirm = "when_unsure" # TV plans: "always" ask, ask "when_unsure", or "never" ask
 tv_lookup = true           # episode names from TVmaze (api.tvmaze.com; names only, never order)
 # Trailing words/phrases stripped from disc labels, and labels that are no name at all.
 label_noise = ["WS", "FS", "PAL", "NTSC", "DVD", "BLURAY", "BD", "R1", "R2", "UK", "SE",

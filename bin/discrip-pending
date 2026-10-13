@@ -4,7 +4,9 @@
   discrip-pending                         list prompts
   discrip-pending film <id> "<Name>"      file a parked film as Movies/<Name>/<Name>.mkv
   discrip-pending tv <id> [--show S] [--season N] [--first-episode E] [--year Y]
-                                          file a parked season disc (defaults: suggestion)
+                                          confirm the season <id> belongs to: files its
+                                          first waiting disc (overrides apply to the whole
+                                          season) and every later disc that follows on
   discrip-pending discard <id>            delete a parked rip and its prompt
   discrip-pending known                   list remembered answers (by disc fingerprint)
   discrip-pending forget <fingerprint>    forget one, so that disc asks again
@@ -27,14 +29,32 @@ def show_list(cfg):
     pending = discrip.read_state(cfg)["pending"]
     if not pending:
         print("No pending prompts.")
+    shown = set()
     for p in pending:
-        print(f"{p['id']}  {p['prompt']}  disc {p['disc_label']!r}")
-        sug = {k: v for k, v in p["suggested"].items() if v is not None}
-        if sug:
-            print("  suggested:", ", ".join(f"{k}={v}" for k, v in sug.items()))
-        for t in p["titles"]:
-            extra = f"  -> {t['proposed']}" if t.get("proposed") else ""
-            print(f"  title {t['index']:2d}  {hms(t['duration_s'])}{extra}")
+        if p["prompt"] == "tv_plan":
+            if p["group"] in shown:
+                continue
+            shown.add(p["group"])
+            members = library.season_members(cfg, p["group"])
+            sug = members[0]["suggested"]
+            print(f"{sug['show']} season {sug['season']}: {len(members)} disc(s) waiting"
+                  f"  ->  discrip-pending tv {members[0]['id']}")
+            for r in members[0].get("reasons") or []:
+                print(f"  asking because {r}")
+            for m in members:
+                disc = m["suggested"].get("disc")
+                wait = f"  (waiting for {m['waiting_for']})" if m.get("waiting_for") else ""
+                print(f"  {m['id']}  disc {m['disc_label']!r}{f' #{disc}' if disc else ''}{wait}")
+                for t in m["titles"]:
+                    print(f"    title {t['index']:2d}  {hms(t['duration_s'])}  -> "
+                          f"{t.get('proposed', '?')}")
+        else:
+            print(f"{p['prompt']}  {p['id']}  disc {p['disc_label']!r}")
+            sug = {k: v for k, v in p["suggested"].items() if v}
+            if sug:
+                print("  suggested:", ", ".join(f"{k}={v}" for k, v in sug.items()))
+            for t in p["titles"]:
+                print(f"    title {t['index']:2d}  {hms(t['duration_s'])}")
         print()
 
 
@@ -64,19 +84,12 @@ def main():
         if args.cmd == "film":
             print(library.answer_name_film(cfg, args.id, args.name))
         elif args.cmd == "tv":
-            item = discrip.get_pending(cfg, args.id)
-            if not item:
-                raise library.PlanError(f"no pending item {args.id}")
-            sug = item["suggested"]
-            show = args.show or sug.get("show")
-            if not show:
-                raise library.PlanError("no show name suggested: pass --show")
-            library.apply_tv_plan(
-                cfg, args.id, show,
-                args.season or sug.get("season") or 1,
-                args.first_episode or sug.get("first_episode") or 1,
-                args.year or sug.get("year"),
-                disc=sug.get("disc"))
+            filed = library.answer_season(cfg, args.id, args.show, args.season,
+                                          args.first_episode, args.year)
+            print(f"filed {len(filed)} disc(s): {', '.join(filed)}")
+            left = [p for p in discrip.read_state(cfg)["pending"] if p["prompt"] == "tv_plan"]
+            if left:
+                print(f"{len(left)} TV disc(s) still waiting; run discrip-pending to see why")
         elif args.cmd == "discard":
             library.discard(cfg, args.id)
         elif args.cmd == "known":

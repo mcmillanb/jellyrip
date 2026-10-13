@@ -5,6 +5,7 @@ Files are moved with link + unlink, so an existing file is never overwritten,
 except a file this same disc (fingerprint) wrote before, which a re-rip replaces.
 """
 import contextlib
+import functools
 import hashlib
 import json
 import logging
@@ -175,19 +176,71 @@ def answer_name_film(cfg, pending_id, name):
 # ---------------------------------------------------------------- TV
 
 
-def tvmaze_names(show, season, timeout=10):
-    """{episode number: name} for show/season from TVmaze; {} if offline or no match."""
-    url = ("https://api.tvmaze.com/singlesearch/shows?embed=episodes&q="
-           + urllib.parse.quote(show))
+def _tvmaze_get(path, timeout=10):
+    with urllib.request.urlopen("https://api.tvmaze.com" + path, timeout=timeout) as r:
+        return json.load(r)
+
+
+@functools.lru_cache(maxsize=32)
+def tvmaze_show(show):
+    """TVmaze's best match for show: {name, seasons: {s: {n: title}}, dvd_order_differs:
+    {seasons}}, or None if offline or no match. Names only; never used for order."""
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as r:
-            data = json.load(r)
-    except (OSError, ValueError) as e:
+        data = _tvmaze_get("/singlesearch/shows?embed=episodes&q=" + urllib.parse.quote(show))
+        seasons = {}
+        for ep in data.get("_embedded", {}).get("episodes", []):
+            if ep.get("season") and ep.get("number"):
+                seasons.setdefault(ep["season"], {})[ep["number"]] = ep.get("name") or ""
+        # Seasons whose DVD release order differs from broadcast order (e.g. Firefly).
+        differs = set()
+        for lst in _tvmaze_get(f"/shows/{data['id']}/alternatelists"):
+            if not lst.get("dvd_release"):
+                continue
+            for alt in _tvmaze_get(f"/alternatelists/{lst['id']}/alternateepisodes?embed=episodes"):
+                orig = (alt.get("_embedded", {}).get("episodes") or [{}])[0]
+                if (orig.get("season"), orig.get("number")) != (alt["season"], alt["number"]):
+                    differs.add(alt["season"])
+    except (OSError, ValueError, KeyError) as e:
         log.info("TVmaze lookup for %r failed: %s", show, e)
-        return {}
+        return None
     log.info("TVmaze: %r matched %r", show, data.get("name"))
-    return {ep["number"]: ep["name"] for ep in data.get("_embedded", {}).get("episodes", [])
-            if ep.get("season") == season and ep.get("number") and ep.get("name")}
+    return {"name": data.get("name") or "", "seasons": seasons, "dvd_order_differs": differs}
+
+
+def tvmaze_names(show, season):
+    """{episode number: name} for show/season; {} if offline or no match."""
+    t = tvmaze_show(show)
+    return t["seasons"].get(season, {}) if t else {}
+
+
+def _norm(name):
+    return "".join(c for c in name.lower() if c.isalnum())
+
+
+def unsure_reasons(cfg, show, season, season_on_label, disc, count):
+    """Why the first disc of a season can't be filed without asking ([] = sure)."""
+    reasons = []
+    if not season_on_label:
+        reasons.append("the disc label doesn't say which season (assumed 1)")
+    if disc not in (None, 1):
+        reasons.append(f"this is disc {disc}, but no earlier disc of the season is filed")
+    if not cfg["video"]["tv_lookup"]:
+        reasons.append("TVmaze lookup is off, so the show can't be checked")
+        return reasons
+    t = tvmaze_show(show)
+    if t is None:
+        reasons.append(f"TVmaze doesn't know {show!r}")
+        return reasons
+    if _norm(t["name"]) != _norm(show):
+        reasons.append(f"TVmaze matched a different name: {t['name']!r}")
+    eps = t["seasons"].get(season)
+    if not eps:
+        reasons.append(f"TVmaze has no season {season}")
+    elif count > len(eps):
+        reasons.append(f"{count} episodes on the disc but TVmaze lists {len(eps)} in season {season}")
+    if season in t["dvd_order_differs"]:
+        reasons.append("the DVD episode order differs from broadcast order: check the numbering")
+    return reasons
 
 
 def episode_paths(cfg, show, season, first_episode, count, year=None, names=None):
@@ -213,11 +266,7 @@ def continuation_key(show, season):
 
 
 def continuation(cfg, show, season):
-    path = Path(cfg["paths"]["state_dir"]) / "tv_continuation.json"
-    try:
-        return json.loads(path.read_text()).get(continuation_key(show, season))
-    except (FileNotFoundError, json.JSONDecodeError):
-        return None
+    return _read(cfg, "tv_continuation.json").get(continuation_key(show, season))
 
 
 def apply_tv_plan(cfg, pending_id, show, season, first_episode, year=None, label=None,
@@ -255,6 +304,140 @@ def apply_tv_plan(cfg, pending_id, show, season, first_episode, year=None, label
         }
     jellyfin_refresh(cfg)
     return dests
+
+
+def season_members(cfg, key):
+    """Parked TV discs of one show+season, in disc order (disc number, unnumbered
+    discs count as disc 1, then rip order)."""
+    members = [p for p in discrip.read_state(cfg)["pending"]
+               if p["prompt"] == "tv_plan" and p.get("group") == key]
+    return sorted(members, key=lambda p: (p["suggested"].get("disc") or 1, p["id"]))
+
+
+def _renumber(cfg, key, members, cont):
+    """Give each waiting disc provisional episode numbers continuing from the one
+    before it, and note discs that wait for a missing earlier disc."""
+    start = cont["next_episode"] if cont else 1
+    # Position of the disc before: 0 = none filed yet, None = unknown (an earlier
+    # unnumbered disc was filed), so no gap check. Unnumbered discs take the next slot.
+    prev = cont.get("last_disc") if cont else 0
+    waiting = None
+    updates = {}
+    for m in members:
+        sug, disc = m["suggested"], m["suggested"].get("disc")
+        if prev is not None:
+            if waiting is None and disc and disc > prev + 1:
+                waiting = f"disc {prev + 1}"
+            prev = disc or prev + 1
+        else:
+            prev = disc
+        paths = proposed_plan(cfg, sug["show"], sug["season"], start, len(m["titles"]),
+                              sug.get("year"))
+        updates[m["id"]] = (start, [p.stem for p in paths], waiting)
+        start += len(m["titles"])
+    with discrip.state_update(cfg) as state:
+        for p in state["pending"]:
+            if p["id"] in updates:
+                first, names, wait = updates[p["id"]]
+                p["suggested"]["first_episode"] = first
+                p["waiting_for"] = wait
+                for t, n in zip(p["titles"], names):
+                    t["proposed"] = n
+    return updates
+
+
+def settle_season(cfg, key):
+    """File waiting discs of a season from the front for as long as each needs no
+    answer. Returns the ids filed. Spec 8.4 / [video] tv_confirm:
+      always       never file without an answer
+      when_unsure  file if the season was already confirmed, or the first disc is
+                   sure (unsure_reasons() is empty)
+      never        always file with the best guess
+    """
+    mode = cfg["video"]["tv_confirm"]
+    filed = []
+    while True:
+        cont = _read(cfg, "tv_continuation.json").get(key)
+        members = season_members(cfg, key)
+        if not members:
+            break
+        updates = _renumber(cfg, key, members, cont)
+        head = members[0]
+        first, _, waiting = updates[head["id"]]
+        sug = head["suggested"]
+        reasons = [] if cont else unsure_reasons(
+            cfg, sug["show"], sug["season"], sug.get("season_on_label"), sug.get("disc"),
+            len(head["titles"]))
+        if cont and sug.get("disc") and sug.get("disc") == cont.get("last_disc"):
+            reasons = [f"disc {sug['disc']} of this season was already filed"]
+        with discrip.state_update(cfg) as state:
+            for p in state["pending"]:
+                if p["id"] == head["id"]:
+                    p["reasons"] = reasons
+        if waiting or mode == "always" or (reasons and mode != "never"):
+            break
+        try:
+            apply_tv_plan(cfg, head["id"], sug["show"], sug["season"], first, sug.get("year"))
+        except PlanError as e:
+            log.warning("%s: could not file automatically: %s", head["id"], e)
+            break
+        filed.append(head["id"])
+    return filed
+
+
+def answer_season(cfg, pending_id, show=None, season=None, first_episode=None, year=None):
+    """The user's answer for a season: applies to the first waiting disc of the
+    season pending_id belongs to (overrides change the whole season), then files
+    every later disc that follows on. Returns the ids filed."""
+    item = discrip.get_pending(cfg, pending_id)
+    if not item or item["prompt"] != "tv_plan":
+        raise PlanError(f"no tv_plan prompt {pending_id}")
+    key = item["group"]
+    head = season_members(cfg, key)[0]
+    sug = head["suggested"]
+    show = naming.sanitise(show or sug["show"] or "")
+    if not show:
+        raise PlanError("no show name: give one")
+    season = season or sug["season"]
+    year = year or sug.get("year")
+    new_key = continuation_key(show, season)
+    if new_key != key or year != sug.get("year"):
+        with discrip.state_update(cfg) as state:
+            for p in state["pending"]:
+                if p.get("group") == key:
+                    p["group"] = new_key
+                    p["suggested"].update(show=show, season=season, year=year)
+    first = first_episode or (_read(cfg, "tv_continuation.json").get(new_key) or {}).get(
+        "next_episode") or (sug["first_episode"] if new_key == key else 1)
+    apply_tv_plan(cfg, head["id"], show, season, first, year)
+    return [head["id"]] + settle_season(cfg, new_key)
+
+
+# ---------------------------------------------------------------- notifications
+
+
+def notify(cfg, text):
+    """Pop text up in every open Jellyfin app (web, iOS, ...). Jellyfin keeps no
+    inbox, so only people using it right now see it. Best effort."""
+    jf = cfg["jellyfin"]
+    if not (jf["api_key"] and cfg["notify"]["jellyfin_popup"]):
+        return
+    headers = {"Authorization": f'MediaBrowser Token="{jf["api_key"]}"',
+               "Content-Type": "application/json"}
+    base = jf["url"].rstrip("/")
+    body = json.dumps({"Header": "discrip", "Text": text,
+                       "TimeoutMs": cfg["notify"]["popup_seconds"] * 1000}).encode()
+    try:
+        with urllib.request.urlopen(urllib.request.Request(base + "/Sessions", headers=headers),
+                                    timeout=10) as r:
+            sessions = [x for x in json.load(r) if x.get("SupportsRemoteControl")]
+        for x in sessions:
+            urllib.request.urlopen(urllib.request.Request(
+                f"{base}/Sessions/{x['Id']}/Message", data=body, headers=headers,
+                method="POST"), timeout=10).close()
+        log.info("notified %d Jellyfin session(s): %s", len(sessions), text)
+    except (OSError, ValueError) as e:
+        log.warning("Jellyfin notification failed: %s", e)
 
 
 # ---------------------------------------------------------------- any prompt

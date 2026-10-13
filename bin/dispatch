@@ -17,6 +17,7 @@ from pathlib import Path
 BIN = Path(__file__).resolve().parent
 sys.path.insert(0, str(BIN.parent / "lib"))
 import discrip  # noqa: E402
+import library  # noqa: E402
 import video  # noqa: E402
 
 log = logging.getLogger("dispatch")
@@ -71,6 +72,32 @@ def classify(cd):
     if any(k.startswith("ID_CDROM_MEDIA_CD") for k in cd):
         return "data_cd"
     return "unknown"
+
+
+PROMPT_TEXT = {
+    "tv_plan": "{title} is ripped and waiting for you to confirm the episodes{why}.",
+    "name_film": "A film is ripped but the disc label ({label}) is no use: give it a name.",
+    "choose_titles": "{title}: not sure which titles to rip. Choose them; the disc is "
+                     "still in the drive.",
+}
+
+
+def notify_outcome(cfg, job_id, result, error):
+    """Pop up in Jellyfin when a job failed or left something to answer."""
+    state = discrip.read_state(cfg)
+    job = next((h for h in state["history"] if h["id"] == job_id), {})
+    title = job.get("title") or "The disc"
+    item = next((p for p in state["pending"] if p["id"] == job_id), None)
+    if result == "error":
+        library.notify(cfg, f"Rip failed: {title}: {error}")
+    elif item:
+        why = ""
+        if item.get("waiting_for"):
+            why = f" (insert {item['waiting_for']} first)"
+        elif item.get("reasons"):
+            why = f" ({item['reasons'][0]})"
+        library.notify(cfg, PROMPT_TEXT[item["prompt"]].format(
+            title=title, label=item["disc_label"], why=why))
 
 
 class Cancelled(Exception):
@@ -185,6 +212,7 @@ def main():
             (log.info if result in ("ok", "skipped", "cancelled") else log.error)(
                 "job %s: %s%s", job_id, result, f" ({error})" if error else "")
             discrip.finish_job(cfg, result, error, output)
+            notify_outcome(cfg, job_id, result, error)
             return 0 if result in ("ok", "skipped", "cancelled") else 1
     except discrip.Busy:
         log.error("another rip is running; not starting")

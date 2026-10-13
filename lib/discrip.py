@@ -40,6 +40,10 @@ DEFAULTS = {
     "state": {
         "history_max": 50,
     },
+    "notify": {
+        "jellyfin_popup": True,    # pop up prompts and failures in open Jellyfin apps
+        "popup_seconds": 30,
+    },
     "jellyfin": {
         "url": "http://localhost:8096",
         "api_key": "",             # Dashboard -> API Keys; empty disables refreshes
@@ -56,6 +60,7 @@ DEFAULTS = {
         "scan_timeout": 1800,
         "rip_timeout": 14400,
         "tv_lookup": True,         # episode names from TVmaze (names only, never order)
+        "tv_confirm": "when_unsure",  # always | when_unsure | never (library.settle_season)
         "label_noise": ["WS", "FS", "PAL", "NTSC", "DVD", "BLURAY", "BD", "R1", "R2",
                         "UK", "SE", "SPECIAL EDITION", "COLLECTORS EDITION",
                         "FAM FUN EDITION", "FAMILY FUN EDITION", "WIDESCREEN"],

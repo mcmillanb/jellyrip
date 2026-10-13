@@ -199,49 +199,55 @@ def file_film(cfg, job_id, label, disc_name, title, mkv, workdir, fp, known):
 
 
 def file_tv(cfg, job_id, label, disc_name, chosen, mkvs, workdir, fp, known):
-    """File a known disc or continue a known season automatically, else park with
-    a tv_plan prompt."""
-    show, season, disc = naming.parse_tv_label(disc_name, cfg["video"]["label_noise"])
-    show = naming.sanitise(show)
-    season = season or 1
-    cont = library.continuation(cfg, show, season) if show else None
-    # Spec 8.4: a following disc (same show and season, different disc number)
-    # continues the numbering without asking. Anything else asks.
-    auto = bool(cont) and disc is not None and disc != cont.get("last_disc")
-    first = cont["next_episode"] if cont else 1
-    year = cont.get("year") if cont else None
+    """Park a season disc with a tv_plan prompt, then let library.settle_season file
+    it (and any later discs of the season waiting behind it) if no answer is needed.
+    A disc confirmed before (same fingerprint) is filed with the same plan."""
+    show, season_on_label, disc = naming.parse_tv_label(disc_name,
+                                                        cfg["video"]["label_noise"])
+    show = naming.sanitise(show) or "Unknown"
+    season = season_on_label or 1
+    year = (library.continuation(cfg, show, season) or {}).get("year")
     if known and known.get("kind") == "tv":
-        # This very disc was confirmed before: same plan, no question.
-        show, season = known["show"], known["season"]
-        first, year, auto = known["first_episode"], known.get("year"), True
-        log.info("known disc: %s season %d from episode %d", show, season, first)
+        show, season, year = known["show"], known["season"], known.get("year")
     discrip.update_job(cfg, title=f"{show} season {season}")
 
     inbox = park(cfg, workdir, job_id)
-    titles = [{"index": t["index"], "duration_s": t["duration_s"],
-               "file": str(inbox / m.name)} for t, m in zip(chosen, mkvs)]
-    proposed = library.proposed_plan(cfg, show or "Unknown", season, first, len(titles), year)
-    for t, p in zip(titles, proposed):
-        t["proposed"] = p.stem
+    key = library.continuation_key(show, season)
     discrip.add_pending(cfg, {
         "id": job_id,
         "prompt": "tv_plan",
+        "group": key,
         "disc_label": label,
         "fingerprint": fp,
-        "suggested": {"show": show, "year": year, "season": season, "first_episode": first,
-                      "disc": disc, "continues": bool(cont)},
-        "titles": titles,
+        "suggested": {"show": show, "year": year, "season": season,
+                      "season_on_label": season_on_label is not None, "disc": disc,
+                      "first_episode": None},
+        "titles": [{"index": t["index"], "duration_s": t["duration_s"],
+                    "file": str(inbox / m.name)} for t, m in zip(chosen, mkvs)],
         "inbox_path": str(inbox),
+        "reasons": [],
+        "waiting_for": None,
     })
-    if auto:
-        log.info("filing %s season %d from episode %d without asking", show, season, first)
+
+    if known and known.get("kind") == "tv":
+        # This very disc was confirmed before: same plan, no question.
+        log.info("known disc: %s season %d from episode %d", show, season,
+                 known["first_episode"])
         try:
-            dests = library.apply_tv_plan(cfg, job_id, show, season, first, year, label, disc)
+            dests = library.apply_tv_plan(cfg, job_id, show, season,
+                                          known["first_episode"], year)
             return str(dests[0].parent)
         except library.PlanError as e:
-            log.warning("automatic continuation failed (%s); asking instead", e)
-    log.info("parked in %s, waiting for a TV plan (suggested %s S%02d from E%02d)",
-             inbox, show, season, first)
+            log.warning("could not file as before (%s); asking instead", e)
+
+    filed = library.settle_season(cfg, key)
+    if job_id in filed:
+        return str(library.episode_paths(cfg, show, season, 1, 1, year)[0].parent)
+    item = discrip.get_pending(cfg, job_id)
+    log.info("parked in %s for a TV plan: %s S%02d from E%02d%s%s", inbox, show, season,
+             item["suggested"]["first_episode"],
+             f"; waiting for {item['waiting_for']}" if item.get("waiting_for") else "",
+             "; " + "; ".join(item["reasons"]) if item.get("reasons") else "")
     return str(inbox)
 
 
