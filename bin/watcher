@@ -25,8 +25,10 @@ def start_rip(cfg):
     if not cfg["dispatch"]["auto_start"]:
         log.info("disc ready; auto_start is off, not starting %s", unit)
         return
-    active = subprocess.run(["systemctl", "is-active", "--quiet", unit]).returncode == 0
-    if active:
+    # A running oneshot unit is "activating", not "active".
+    state = subprocess.run(["systemctl", "is-active", unit],
+                           capture_output=True, text=True).stdout.strip()
+    if state in ("active", "activating", "deactivating", "reloading"):
         log.warning("disc ready but %s is already running; not starting another", unit)
         discrip.set_message(cfg, "A rip is already running; the new disc was not started.")
         return

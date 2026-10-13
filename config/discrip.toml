@@ -25,3 +25,21 @@ min_free_gb = 25         # refuse to rip below this much free space in [paths] m
 
 [state]
 history_max = 50         # jobs kept in state.json history
+
+[video]
+minlength = 600            # seconds; shorter titles are ignored (menus, trailers)
+film_min = 3600            # a film's main title is at least this long
+episode_min = 1080         # season discs: episodes are 18-70 min ...
+episode_max = 4200
+episode_tolerance = 0.2    # ... and within 20% of the group median
+season_min_titles = 3
+max_candidates = 12        # more titles than this: ask instead of guessing (decoys)
+duplicate_tolerance = 0.02 # more than one title this close to the longest: ask
+scan_timeout = 1800        # protected discs take up to ~15 min to scan
+rip_timeout = 14400
+# Trailing words/phrases stripped from disc labels, and labels that are no name at all.
+label_noise = ["WS", "FS", "PAL", "NTSC", "DVD", "BLURAY", "BD", "R1", "R2", "UK", "SE",
+               "SPECIAL EDITION", "COLLECTORS EDITION", "FAM FUN EDITION",
+               "FAMILY FUN EDITION", "WIDESCREEN"]
+junk_labels = ["DVD", "DVD_VIDEO", "DVDVIDEO", "DVDVOLUME", "VIDEO_TS", "LOGICAL_VOLUME_ID",
+               "DISC", "MOVIE", "FILM", "VOLUME", "NO_LABEL", "UNTITLED"]

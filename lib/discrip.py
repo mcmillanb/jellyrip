@@ -8,6 +8,7 @@ import datetime
 import fcntl
 import json
 import os
+import shutil
 import socket
 import subprocess
 import time
@@ -38,6 +39,24 @@ DEFAULTS = {
     },
     "state": {
         "history_max": 50,
+    },
+    "video": {
+        "minlength": 600,          # seconds; shorter titles are ignored
+        "film_min": 3600,          # a film's main title is at least this long
+        "episode_min": 1080,       # season discs: episode duration band
+        "episode_max": 4200,
+        "episode_tolerance": 0.2,  # episodes within 20% of the band median
+        "season_min_titles": 3,
+        "max_candidates": 12,      # more titles than this: ask (decoy playlists)
+        "duplicate_tolerance": 0.02,  # >1 title this close to the longest: ask
+        "scan_timeout": 1800,
+        "rip_timeout": 14400,
+        "label_noise": ["WS", "FS", "PAL", "NTSC", "DVD", "BLURAY", "BD", "R1", "R2",
+                        "UK", "SE", "SPECIAL EDITION", "COLLECTORS EDITION",
+                        "FAM FUN EDITION", "FAMILY FUN EDITION", "WIDESCREEN"],
+        "junk_labels": ["DVD", "DVD_VIDEO", "DVDVIDEO", "DVDVOLUME", "VIDEO_TS",
+                        "LOGICAL_VOLUME_ID", "DISC", "MOVIE", "FILM", "VOLUME",
+                        "NO_LABEL", "UNTITLED"],
     },
 }
 
@@ -224,6 +243,23 @@ def recover_stale_job(cfg):
             _close_job(cfg, state, "error", f"interrupted at stage {job['stage']!r} "
                        "(reboot, crash or kill)")
         return job
+
+
+def add_pending(cfg, item):
+    """Add a prompt for the user (spec 8.2 pending); replaces one with the same id."""
+    with state_update(cfg) as state:
+        state["pending"] = [p for p in state["pending"] if p["id"] != item["id"]]
+        state["pending"].append({**item, "created_at": now_iso()})
+
+
+def check_free_space(cfg, need_bytes=0):
+    """Return an error string if media would drop below min_free_gb, else None."""
+    media = cfg["paths"]["media"]
+    free_gb = shutil.disk_usage(media).free / 1e9
+    need_gb = need_bytes / 1e9 + cfg["dispatch"]["min_free_gb"]
+    if free_gb < need_gb:
+        return f"only {free_gb:.0f} GB free on {media}, need {need_gb:.0f} GB"
+    return None
 
 
 def set_message(cfg, text):

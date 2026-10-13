@@ -3,11 +3,11 @@
 
 Started by discrip-watcher via discrip-rip.service. Reads the disc itself rather
 than trusting udev properties: dvd-reset-auth, then cdrom_id and blkid -p.
-Holds the rip lock and records the job in state.json (step 4). No rippers yet.
+Holds the rip lock and records the job in state.json. Video DVDs go to
+lib/video.py; audio CDs are not handled yet.
 """
 import logging
 import os
-import shutil
 import signal
 import subprocess
 import sys
@@ -17,6 +17,7 @@ from pathlib import Path
 BIN = Path(__file__).resolve().parent
 sys.path.insert(0, str(BIN.parent / "lib"))
 import discrip  # noqa: E402
+import video  # noqa: E402
 
 log = logging.getLogger("dispatch")
 
@@ -80,19 +81,10 @@ def on_sigterm(signum, frame):
     raise Cancelled()
 
 
-def check_free_space(cfg):
-    """Return an error string if /srv/media is below min_free_gb, else None."""
-    free_gb = shutil.disk_usage(cfg["paths"]["media"]).free / 1e9
-    if free_gb < cfg["dispatch"]["min_free_gb"]:
-        return (f"only {free_gb:.0f} GB free on {cfg['paths']['media']} "
-                f"(minimum {cfg['dispatch']['min_free_gb']} GB)")
-    return None
-
-
-def rip(cfg, dev):
-    """Detect and rip the disc. Returns (result, error)."""
+def rip(cfg, dev, job_id):
+    """Detect and rip the disc. Returns (result, error, output)."""
     if not wait_ready(dev, cfg["drive"]["ready_timeout"]):
-        return "error", "no readable disc (drive never became ready)"
+        return "error", "no readable disc (drive never became ready)", None
     # Before anything else: stuck CSS AGIDs make MakeMKV fail with "Failed to
     # open disc". Harmless (rc=1) on a CD.
     run([BIN / "dvd-reset-auth", dev], timeout=30)
@@ -114,23 +106,29 @@ def rip(cfg, dev):
     job_type = {"dvd": "video", "bluray": "video", "audio": "audio"}.get(media)
     discrip.update_job(cfg, type=job_type, title=label)
 
+    output, eject = None, True
     if media == "bluray":
         result, error = "error", "Blu-ray not supported"
     elif job_type is None:
         result, error = "error", f"no ripper for media type {media!r}"
-    elif error := check_free_space(cfg):
+    elif error := discrip.check_free_space(cfg):
         result = "error"
+    elif media == "dvd":
+        try:
+            result, error, output, eject = video.rip_dvd(cfg, dev, job_id, label)
+        except video.RipError as e:
+            result, error = "error", str(e)
     else:
         log.info("would rip: %s (%s ripper not built yet)", media, job_type)
         result, error = "skipped", f"{job_type} ripper not built yet"
 
-    if cfg["dispatch"]["eject_when_done"]:
+    if eject and cfg["dispatch"]["eject_when_done"]:
         discrip.update_job(cfg, stage="ejecting")
         if discrip.eject(dev):
             log.info("ejected")
         else:
             log.error("eject failed: tray did not open")
-    return result, error
+    return result, error, output
 
 
 def main():
@@ -159,19 +157,20 @@ def main():
             discrip.start_job(cfg, job_id)
             try:
                 dev = discrip.find_drive(cfg)
+                output = None
                 if dev is None:
                     result, error = "error", "no drive found"
                 else:
                     log.info("drive %s", dev)
-                    result, error = rip(cfg, dev)
+                    result, error, output = rip(cfg, dev, job_id)
             except Cancelled:
-                result, error = "cancelled", None
+                result, error, output = "cancelled", None, None
             except Exception as e:
                 log.exception("dispatch failed")
-                result, error = "error", f"internal error: {e}"
+                result, error, output = "error", f"internal error: {e}", None
             (log.info if result in ("ok", "skipped", "cancelled") else log.error)(
                 "job %s: %s%s", job_id, result, f" ({error})" if error else "")
-            discrip.finish_job(cfg, result, error)
+            discrip.finish_job(cfg, result, error, output)
             return 0 if result in ("ok", "skipped", "cancelled") else 1
     except discrip.Busy:
         log.error("another rip is running; not starting")

@@ -104,6 +104,14 @@ Decision (2026-10-13): detection uses a **polling watcher service**, not a udev 
 - Check `makemkvcon` still starts after upgrades. MakeMKV can refuse to run old versions, so if it reports the version is too old, rebuild from the current release. Log the installed version on each job.
 - Use robot mode (`-r`) throughout. Progress comes from `PRGV`, `PRGT`, `PRGC` and `MSG` lines.
 
+Implementation notes (build step 5, `lib/video.py`, `lib/makemkv.py`):
+
+- Thresholds, label noise and junk lists are in `[video]` in `discrip.toml`. Defaults: `minlength` 600 s, film >= 60 min, episodes 18-70 min within 20%.
+- MakeMKV re-scans the disc for every `mkv` run, so a rip costs two scans. Home Alone (45 titles, structure protection) scans in 8.5 min; budget ~17 min of scanning on such discs. `info` and `mkv` use the same `--minlength`, so title indexes match.
+- `dvd-reset-auth` runs before every `makemkvcon`. A failed scan is retried once; a rip is retried once only if MakeMKV failed to open the disc (a read error mid-rip would recur).
+- Progress: `PRGV` total/max becomes `job.percent`, `PRGC`/`PRGT` become `job.detail`; state writes are throttled to one per 2 s.
+- On error or cancel, `_work/<job-id>` is removed. Files move into the library with `link` + `unlink`, so an existing file is never overwritten.
+
 Flow for each video disc:
 
 1. **Info scan**: `makemkvcon -r info disc:0`. Collect the disc name and, per title: index, duration, size, chapter count (`CINFO` / `TINFO` lines).
@@ -118,6 +126,8 @@ All thresholds live in config. When unsure, ask the user rather than guess.
 
 - **Film**: the longest title is >= 60 min and there is no cluster of similar-length titles. Rip that title only. Extras and trailers are skipped (setting to include them).
 - **Season disc**: 3 or more titles with durations in a band of about 18-70 min and within about 20% of the group median. Rip all of them, in disc title order.
+- **Long title next to a season cluster**: if its duration is the sum of the cluster (within 5%) it is a "play all" and is skipped (season); otherwise it could be a film with similar-length extras, so ask (ambiguous).
+- **Twins**: more than one title within 2% of the longest (decoys, alternate cuts, language versions): ask.
 - **Ambiguous**: anything else, or more than 12 candidate titles (some Blu-rays carry dozens of near-identical decoy playlists). Do not rip automatically. Create a pending `choose_titles` prompt listing the titles so the user can pick, and leave the disc in the drive.
 - A whole season welded into one very long title is ripped as one file and flagged in history.
 
@@ -265,7 +275,7 @@ Auth and exposure:
 
 ## 11. Open decisions (resolve with the user before or during build)
 
-1. Default `--minlength` and the film/season duration thresholds in 7.1.1. Validate against a few real discs and tune.
+1. Default `--minlength` and the film/season duration thresholds in 7.1.1. Validate against a few real discs and tune. (Defaults set in step 5; still to validate against a real season disc.)
 2. If a disc is inserted while busy: queue, or reject with a message? **Decided 2026-10-13:** reject with a message (8.1).
 3. Auto-start on insert, or require a tap on `/api/start`? **Decided 2026-10-13:** auto-start, switchable with `[dispatch] auto_start`.
 4. Jellyfin refresh: API call after move, or rely on its own scanning?
