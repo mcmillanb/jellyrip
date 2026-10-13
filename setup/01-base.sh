@@ -5,6 +5,9 @@ set -euo pipefail
 
 OWNER=jellyfin
 
+mountpoint -q /srv || { echo "/srv is not mounted: run setup/00-data-disk.sh first"; exit 1; }
+mountpoint -q /var/lib/discrip || { echo "/var/lib/discrip is not mounted: run setup/00-data-disk.sh first"; exit 1; }
+
 echo "== apt packages"
 apt-get update
 apt-get install -y --no-install-recommends \
@@ -15,18 +18,33 @@ apt-get install -y --no-install-recommends \
     samba \
     docker.io docker-cli
 
-echo "== docker group"
+echo "== docker group, data-root on /srv"
 usermod -aG docker "$OWNER"
+mkdir -p /etc/docker /etc/systemd/system/docker.service.d /srv/docker
+printf '{\n  "data-root": "/srv/docker"\n}\n' > /etc/docker/daemon.json
+printf '[Unit]\nRequiresMountsFor=/srv\n' > /etc/systemd/system/docker.service.d/10-srv.conf
+systemctl daemon-reload
+systemctl restart docker
 
 echo "== directory layout"
 mkdir -p /srv/media/{_work,_inbox,Movies,TV,Music,_unknown_music}
-mkdir -p /opt/discrip /var/lib/discrip/logs
-chown -R "$OWNER:$OWNER" /srv/media /opt/discrip /var/lib/discrip
+mkdir -p /opt/discrip /var/lib/discrip/logs /srv/jellyfin
+chown -R "$OWNER:$OWNER" /srv/media /srv/jellyfin /opt/discrip /var/lib/discrip
 
 echo "== persistent journal (Pi OS defaults to volatile)"
 mkdir -p /etc/systemd/journald.conf.d /var/log/journal
 printf '[Journal]\nStorage=persistent\nSystemMaxUse=200M\nSyncIntervalSec=15s\n' > /etc/systemd/journald.conf.d/99-persistent.conf
 systemctl restart systemd-journald
+
+echo "== DVD drive USB autosuspend (must stay 'on')"
+if [ -e /sys/block/sr0 ]; then
+    usbdev=$(readlink -f /sys/block/sr0/device | grep -oE '[0-9]+-[0-9.]+:[0-9.]+' | tail -1 | cut -d: -f1)
+    ctl=$(cat "/sys/bus/usb/devices/$usbdev/power/control")
+    echo "sr0 is USB $usbdev, power/control=$ctl"
+    [ "$ctl" = on ] || echo "WARNING: autosuspend is enabled for the DVD drive; the watcher needs it off"
+else
+    echo "WARNING: no /dev/sr0; check the DVD drive"
+fi
 
 echo "== bootloader EEPROM"
 rpi-eeprom-update -a

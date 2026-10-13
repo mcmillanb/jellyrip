@@ -23,20 +23,27 @@ Insert a disc into a USB drive, walk away, and later find it in Jellyfin with se
 
 ## 3. Target hardware and OS
 
-- Raspberry Pi 4 (RAM TBC), official 3 A PSU.
-- Raspberry Pi OS Lite (64-bit), headless. Boots from a Kingston XS1000 (USB 3.0 SSD, ~1 TB). No SD card in normal use.
-- USB DVD drive (slim, bus-powered, ~2-3 W). Device appears as `/dev/sr0`.
-- Wired Ethernet. Hostname TBC (e.g. `ripper`), reachable as `<hostname>.local`.
+- Raspberry Pi 4 Model B, 4 GB, official 3 A PSU.
+- Raspberry Pi OS Lite (64-bit, Debian 13 trixie), headless. **Boots from the SD card**; the Kingston XS1000 (USB SSD, ~1 TB) is the data disk only. Decided 2026-10-13 after four crashes where a USB dropout took the root filesystem (on the XS1000) with it: with the OS on SD, a USB glitch fails a rip, not the system. EEPROM `BOOT_ORDER=0xf41` (SD first, then USB).
+- USB DVD drive: Pioneer DVRTD11RS in an enclosure with an Initio INIC-1618L bridge (`13fd:0840`, USB 2 only), region 2. Device appears as `/dev/sr0`. **Its auxiliary micro-USB power lead must be on a separate USB charger, and must only be plugged or unplugged while the Pi is off** (see `docs/hardware-notes.md`).
+- Wired Ethernet. Hostname `jellyfin`, user `jellyfin`, reachable as `jellyfin.local`.
 - Case: custom 3D-printed (PETG/ASA). Thermal and power health must be visible in the UI (see 9).
 
 Assumptions to verify on first boot, not to trust blindly:
 
-- USB boot from the XS1000 works (update bootloader EEPROM if not).
-- The XS1000 and the DVD drive can both run bus-powered without undervoltage. Check `vcgencmd get_throttled` under a real rip. If it shows undervoltage, use a powered USB hub.
+- Verified 2026-10-13: with the DVD drive bus-powered from the Pi, its spin-up tripped the Pi's shared USB over-current limiter (all ports) while `get_throttled` stayed `0x0`. With the aux lead on a charger, spin-ups, a full rip and a disc swap were clean. If over-current events return, use a powered hub with backfeed protection.
+- The XS1000 only links at USB 2 (480M), even on a Mac, so it is a drive or cable fault. About 40 MB/s is plenty for this job.
 
 ## 4. Storage layout
 
-Single drive holds the OS and the library. Keep it simple: one root filesystem (ext4).
+OS on the SD card; everything that writes a lot lives on the XS1000, formatted as one ext4 filesystem mounted at `/srv` (`setup/00-data-disk.sh`, fstab by UUID, `nofail`):
+
+- `/srv/media`: the library and rip work areas (below). `_work` and the libraries share this filesystem, so moves are atomic renames.
+- `/srv/discrip`: bind-mounted at `/var/lib/discrip`.
+- `/srv/docker`: Docker `data-root`.
+- `/srv/jellyfin`: Jellyfin config and cache (step 9).
+
+Every discrip service, Docker and Jellyfin has `RequiresMountsFor=/srv`, and the rippers refuse to start unless `/srv` is a mountpoint, so a missing SSD can never fill the SD card.
 
 ```
 /srv/media/
@@ -245,7 +252,7 @@ Auth and exposure:
 
 ## 10. Jellyfin and Samba
 
-- Jellyfin in Docker (official arm64 image), config and cache on the XS1000. Mount `/srv/media/Movies`, `/srv/media/TV` and `/srv/media/Music` read-only. Libraries: Movies, Shows, Music. `_inbox`, `_work` and `_unknown_music` are not libraries.
+- Jellyfin in Docker (official arm64 image), config and cache in `/srv/jellyfin` (XS1000). Mount `/srv/media/Movies`, `/srv/media/TV` and `/srv/media/Music` read-only. Libraries: Movies, Shows, Music. `_inbox`, `_work` and `_unknown_music` are not libraries.
 - Expect direct play only. No hardware transcoding on the Pi 4. Raw DVD MPEG-2 may force transcoding on some clients (notably browsers), so test on the real devices.
 - Enable the "Allow media downloads" permission for the user(s) who need browser downloads.
 - Trigger a library scan after a successful move (Jellyfin API with an API key from config), or rely on the scheduled/real-time monitor. Decide in 11.
@@ -264,7 +271,7 @@ Auth and exposure:
 
 ## 12. Build order
 
-1. Base OS: confirm USB boot, SSH, hostname, `get_throttled` clean under load, Docker, Samba, directory layout.
+1. Base OS on SD: SSH, hostname, data disk at `/srv` (`00-data-disk.sh`), `get_throttled` clean under load, Docker (data on `/srv`), Samba, directory layout (`01-base.sh`).
 2. MakeMKV arm64 install and a manual rip of one DVD by hand to prove the drive and key work.
 3. Watcher service, `dispatch` script and systemd units. Prove detection (including swaps, startup with a disc in, and drive unplug/replug), classification and eject with logging only.
 4. State file writer and lock, used by all scripts.
