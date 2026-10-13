@@ -44,6 +44,10 @@ DEFAULTS = {
         "abcde_conf": "/opt/discrip/abcde.conf",
         "rip_timeout": 3600,
     },
+    "web": {
+        "port": 8080,
+        "token": "",               # shared secret for controls; setup/03-discrip.sh makes one
+    },
     "notify": {
         "jellyfin_popup": True,    # pop up prompts and failures in open Jellyfin apps
         "popup_seconds": 0,        # 0: a dialog that stays until OK; >0: a brief toast

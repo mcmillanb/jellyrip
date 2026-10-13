@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="discrip">
+<meta name="theme-color" content="#f4f5f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#16181d" media="(prefers-color-scheme: dark)">
+<link rel="apple-touch-icon" href="icon.png">
+<link rel="icon" href="icon.png">
+<link rel="manifest" href="manifest.json">
+<title>discrip</title>
+<style>
+:root {
+  --bg: #f4f5f7; --card: #ffffff; --text: #1b1d22; --muted: #6b7280; --line: #e3e5ea;
+  --accent: #2f6fd6; --accent-text: #ffffff; --ok: #1f8a4c; --warn: #b26a00; --bad: #c0352b;
+  --warn-bg: #fff4e0; --bad-bg: #fdecea; --ok-bg: #e7f6ec; --bar: #e8ebf0;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181d; --card: #20232a; --text: #eceef2; --muted: #9aa1ad; --line: #2f333c;
+    --accent: #5b93ef; --accent-text: #0d1117; --ok: #4cc27a; --warn: #f0a63a; --bad: #f2685c;
+    --warn-bg: #3a2c12; --bad-bg: #3d1f1c; --ok-bg: #173424; --bar: #2f333c;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+}
+main { max-width: 640px; margin: 0 auto; padding: 12px 16px 40px; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+         padding: 8px 0 12px; }
+header h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.chip { font-size: 13px; padding: 4px 10px; border-radius: 999px; background: var(--card);
+        border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.chip.ok { color: var(--ok); } .chip.warn { color: var(--warn); } .chip.bad { color: var(--bad); }
+.banner { border-radius: 12px; padding: 10px 14px; margin-bottom: 10px; font-size: 15px; }
+.banner.warn { background: var(--warn-bg); color: var(--warn); }
+.banner.bad { background: var(--bad-bg); color: var(--bad); }
+.banner.info { background: var(--card); border: 1px solid var(--line); }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+        padding: 14px; margin-bottom: 12px; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
+     margin: 22px 4px 8px; font-weight: 600; }
+.title { font-size: 18px; font-weight: 600; margin: 0 0 2px; overflow-wrap: anywhere; }
+.sub { color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
+.bar { height: 10px; background: var(--bar); border-radius: 999px; overflow: hidden; margin: 12px 0 6px; }
+.bar > div { height: 100%; background: var(--accent); border-radius: 999px; transition: width .6s; }
+.bar.busy > div { width: 35% !important; animation: slide 1.4s ease-in-out infinite; }
+@keyframes slide { 0% { margin-left: -35%; } 100% { margin-left: 100%; } }
+.row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+button { font: inherit; font-weight: 600; min-height: 44px; padding: 0 16px; border-radius: 10px;
+         border: 1px solid var(--line); background: var(--bg); color: var(--text); cursor: pointer; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+button.danger { color: var(--bad); }
+button.small { min-height: 34px; padding: 0 12px; font-size: 14px; font-weight: 500; }
+button:disabled { opacity: .5; }
+label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
+input[type=text], input[type=number], input[type=password] {
+  font: inherit; width: 100%; min-height: 44px; padding: 0 12px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+.grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+.files { margin: 8px 0 0; padding: 0; list-style: none; font-size: 14px; }
+.files li { padding: 6px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+.files .disc { color: var(--muted); font-size: 13px; padding-top: 10px; border-top: none; }
+.reason { color: var(--warn); font-size: 14px; margin: 6px 0 0; }
+.check { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
+.check input { width: 22px; height: 22px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.seg label { margin: 0; padding: 10px 16px; color: var(--text); font-size: 15px; cursor: pointer; }
+.seg input { display: none; }
+.seg input:checked + span { color: var(--accent); font-weight: 600; }
+.hist { display: flex; justify-content: space-between; gap: 10px; padding: 10px 0;
+        border-top: 1px solid var(--line); cursor: pointer; }
+.hist:first-child { border-top: none; }
+.res-ok { color: var(--ok); } .res-error { color: var(--bad); }
+.res-skipped, .res-cancelled { color: var(--muted); }
+details > summary { cursor: pointer; list-style: none; }
+details > summary::-webkit-details-marker { display: none; }
+pre { white-space: pre-wrap; word-break: break-all; font-size: 12px; line-height: 1.35;
+      max-height: 60vh; overflow: auto; background: var(--bg); padding: 10px; border-radius: 8px; }
+.muted { color: var(--muted); }
+.empty { color: var(--muted); text-align: center; padding: 6px 0; }
+.toast { position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom));
+         transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 10px 16px;
+         border-radius: 10px; font-size: 15px; max-width: 90vw; z-index: 10; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>discrip</h1>
+    <div class="chips" id="chips"></div>
+  </header>
+  <div id="banners"></div>
+
+  <div class="card" id="now"></div>
+
+  <h2 id="queue-h" hidden>Needs you</h2>
+  <div id="queue"></div>
+
+  <h2>History</h2>
+  <div class="card" id="history"><div class="empty">Loading…</div></div>
+
+  <h2>More</h2>
+  <div class="card">
+    <details id="known-d"><summary><b>Remembered discs</b> <span class="muted">(answers reused when a disc comes back)</span></summary>
+      <div id="known"></div></details>
+  </div>
+  <div class="card">
+    <details id="token-d"><summary><b>Access token</b> <span class="muted" id="token-state"></span></summary>
+      <label for="token">Needed for the buttons. It is in /opt/discrip/discrip.toml under [web].</label>
+      <input type="password" id="token" autocomplete="off">
+      <div class="row"><button class="primary" id="token-save">Save on this device</button></div>
+    </details>
+  </div>
+</main>
+
+<script>
+"use strict";
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g,
+  (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const hms = (s) => `${Math.floor(s / 3600)}:${String(Math.floor(s / 60) % 60).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+const ago = (iso, now) => {
+  const s = Math.max(0, (Date.parse(now) - Date.parse(iso)) / 1000);
+  if (s < 90) return `${Math.round(s)} s`;
+  if (s < 5400) return `${Math.round(s / 60)} min`;
+  if (s < 172800) return `${Math.round(s / 3600)} h`;
+  return `${Math.round(s / 86400)} days`;
+};
+
+// ---------------------------------------------------------------- token + API
+function getToken() { try { return localStorage.getItem("discrip-token") || ""; } catch { return ""; } }
+function setToken(t) { try { localStorage.setItem("discrip-token", t); } catch {} showTokenState(); }
+function showTokenState() { $("#token-state").textContent = getToken() ? "(saved)" : "(not set)"; }
+if (location.hash.startsWith("#token=")) {
+  setToken(decodeURIComponent(location.hash.slice(7)));
+  history.replaceState(null, "", location.pathname);
+}
+$("#token-save").onclick = () => { setToken($("#token").value.trim()); $("#token").value = ""; toast("Token saved"); };
+
+async function api(method, path, data) {
+  const opts = { method, headers: {} };
+  if (method !== "GET") {
+    opts.headers["Authorization"] = "Bearer " + getToken();
+    opts.headers["Content-Type"] = "application/json";
+    opts.body = JSON.stringify(data || {});
+  }
+  const r = await fetch(path, opts);
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 401) { $("#token-d").open = true; throw new Error("Enter the access token first (bottom of the page)."); }
+  if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+  return j;
+}
+let toastTimer;
+function toast(msg) {
+  let t = $(".toast");
+  if (!t) { t = document.createElement("div"); t.className = "toast"; document.body.append(t); }
+  t.textContent = msg; clearTimeout(toastTimer); toastTimer = setTimeout(() => t.remove(), 3500);
+}
+async function act(btn, fn, ok) {
+  btn.disabled = true;
+  try { await fn(); if (ok) toast(ok); poll(); refreshHistory(); }
+  catch (e) { toast(e.message); }
+  finally { btn.disabled = false; }
+}
+
+// ---------------------------------------------------------------- status
+const DRIVE = { ready: ["Disc in", "ok"], tray_open: ["Tray open", ""], no_disc: ["No disc", ""],
+  not_ready: ["Reading disc…", ""], missing: ["Drive missing", "bad"],
+  unresponsive: ["Drive not responding", "bad"], no_info: ["Drive ?", "warn"] };
+const STAGE = { detecting: "Checking the disc", scanning: "Scanning the disc", ripping: "Ripping",
+  moving: "Filing into the library", ejecting: "Ejecting" };
+const RESULT = { ok: "✓", error: "✕", skipped: "–", cancelled: "–" };
+let last = null;
+
+function renderChips(s) {
+  const d = s.state.drive || {}, h = s.health;
+  const [txt, cls] = DRIVE[d.status] || ["Drive ?", "warn"];
+  const temp = h.temp_c == null ? "" : `<span class="chip ${h.temp_c >= 75 ? "bad" : h.temp_c >= 65 ? "warn" : ""}">${h.temp_c} °C</span>`;
+  const free = h.free_gb == null ? "" : `<span class="chip ${h.free_gb < h.min_free_gb ? "bad" : ""}">${Math.round(h.free_gb)} GB free</span>`;
+  $("#chips").innerHTML = `<span class="chip ${cls}">${esc(txt)}</span>${temp}${free}`;
+}
+
+function renderBanners(s) {
+  const out = [], h = s.health, d = s.state.drive || {};
+  for (const f of h.throttle_flags) out.push(["bad", `Power/thermal: ${f}. Check the power supply and cooling.`]);
+  if (h.free_gb != null && h.free_gb < h.min_free_gb)
+    out.push(["bad", `Only ${Math.round(h.free_gb)} GB free: rips are refused below ${h.min_free_gb} GB.`]);
+  if (d.status === "missing" || d.status === "unresponsive")
+    out.push(["bad", "Drive not responding: power-cycle the DVD drive (its own power lead too)."]);
+  if (d.last_poll && Date.parse(s.now) - Date.parse(d.last_poll) > 90000)
+    out.push(["bad", `The disc watcher hasn't reported for ${ago(d.last_poll, s.now)}: discs won't be noticed. (systemctl status discrip-watcher)`]);
+  if (s.state.message) out.push(["warn", s.state.message.text]);
+  if (!s.auto_start) out.push(["info", "Auto-start is off: press Start to rip a disc."]);
+  $("#banners").innerHTML = out.map(([c, t]) => `<div class="banner ${c}">${esc(t)}</div>`).join("");
+}
+
+function renderNow(s) {
+  const job = s.state.job, d = s.state.drive || {}, lj = s.last_job;
+  const busy = ["active", "activating", "deactivating"].includes(s.rip_unit);
+  let html;
+  if (job) {
+    const pct = job.percent;
+    html = `<div class="title">${esc(job.title || d.label || "Disc")}</div>
+      <div class="sub">${esc(STAGE[job.stage] || job.stage)}${job.kind ? " · " + esc(job.kind) : ""} · started ${ago(job.started_at, s.now)} ago</div>
+      <div class="bar ${pct == null ? "busy" : ""}"><div style="width:${pct ?? 0}%"></div></div>
+      <div class="sub">${pct == null ? "" : pct.toFixed(0) + "% · "}${esc(job.detail || "")}</div>
+      <div class="row"><button class="danger" id="b-cancel">Cancel rip</button></div>`;
+  } else {
+    const [txt] = DRIVE[d.status] || ["Drive ?"];
+    let lastLine = "";
+    if (lj) lastLine = `<div class="sub" style="margin-top:8px">Last: <span class="res-${esc(lj.result)}">${RESULT[lj.result] || ""} ${esc(lj.result)}</span> · ${esc(lj.title || "disc")}${lj.error ? " · " + esc(lj.error) : ""} · ${ago(lj.finished_at, s.now)} ago</div>`;
+    const canStart = d.status === "ready" && !busy;
+    const rerip = !busy && lj && lj.error === "already in the library";
+    html = `<div class="title">Idle</div><div class="sub">${esc(txt)}${d.label ? " · " + esc(d.label) : ""}</div>${lastLine}
+      <div class="row">
+        ${canStart && !s.auto_start ? '<button class="primary" id="b-start">Start rip</button>' : ""}
+        ${rerip ? '<button id="b-rerip">Rip again anyway</button>' : ""}
+        ${d.status === "ready" || d.status === "not_ready" ? '<button id="b-eject">Eject</button>' : ""}
+      </div>`;
+  }
+  $("#now").innerHTML = html;
+  const on = (id, fn) => { const b = $(id); if (b) b.onclick = () => fn(b); };
+  on("#b-cancel", (b) => { if (confirm("Cancel this rip? Partial files are deleted.")) act(b, () => api("POST", "/api/cancel"), "Cancelling…"); });
+  on("#b-start", (b) => act(b, () => api("POST", "/api/start"), "Starting…"));
+  on("#b-rerip", (b) => {
+    if (!confirm("Rip this disc again? Its files in the library are replaced.")) return;
+    act(b, async () => {
+      const r = await api("POST", "/api/start", { rerip: true });
+      toast(r.started ? "Ripping it again…" : "Put the disc back in: it will be ripped again");
+    });
+  });
+  on("#b-eject", (b) => act(b, () => api("POST", "/api/eject"), "Ejecting"));
+}
+
+// ---------------------------------------------------------------- queue
+function queueSignature(p) {
+  return JSON.stringify(p.map((x) => [x.id, x.waiting_for, x.reasons, x.answer, x.suggested.first_episode]));
+}
+let queueSig = "";
+
+function renderQueue(s) {
+  const pending = s.state.pending || [];
+  const sig = queueSignature(pending);
+  const editing = document.activeElement && $("#queue").contains(document.activeElement);
+  if (sig === queueSig || editing) return;
+  queueSig = sig;
+  $("#queue-h").hidden = pending.length === 0;
+  const groups = new Map(), cards = [];
+  for (const p of pending) {
+    if (p.prompt === "tv_plan") {
+      if (!groups.has(p.group)) { groups.set(p.group, []); cards.push(["tv", p.group]); }
+      groups.get(p.group).push(p);
+    } else cards.push([p.prompt, p]);
+  }
+  $("#queue").innerHTML = "";
+  for (const [kind, x] of cards) {
+    const el = document.createElement("div");
+    el.className = "card";
+    $("#queue").append(el);
+    if (kind === "tv") tvCard(el, groups.get(x));
+    else if (kind === "name_film") filmCard(el, x);
+    else if (kind === "choose_titles") chooseCard(el, x);
+  }
+}
+
+function tvCard(el, members) {
+  members.sort((a, b) => ((a.suggested.disc || 1) - (b.suggested.disc || 1)) || a.id.localeCompare(b.id));
+  const head = members[0], s = head.suggested;
+  const waiting = members.find((m) => m.waiting_for);
+  el.innerHTML = `
+    <div class="title">${esc(s.show)} · season ${esc(s.season)}</div>
+    <div class="sub">${members.length} disc${members.length > 1 ? "s" : ""} ripped, waiting for you to confirm the episodes</div>
+    ${(head.reasons || []).map((r) => `<p class="reason">⚠ ${esc(r)}</p>`).join("")}
+    ${waiting ? `<p class="reason">Insert ${esc(waiting.waiting_for)} first, or confirm and the rest wait for it.</p>` : ""}
+    <label>Show</label><input type="text" name="show" value="${esc(s.show)}">
+    <div class="grid">
+      <div><label>Season</label><input type="number" name="season" min="0" value="${esc(s.season)}"></div>
+      <div><label>First episode</label><input type="number" name="first" min="1" value="${esc(s.first_episode ?? 1)}"></div>
+      <div><label>Year (optional)</label><input type="number" name="year" value="${esc(s.year ?? "")}"></div>
+    </div>
+    <ul class="files"></ul>
+    <div class="row"><button class="primary" data-a="ok">Confirm season</button><button class="danger small" data-a="discard">Discard a disc…</button></div>`;
+  const val = (n) => el.querySelector(`[name=${n}]`).value.trim();
+  const params = () => ({ show: val("show"), season: val("season"), first_episode: val("first"), year: val("year") });
+  const list = el.querySelector(".files");
+  const draw = (plan) => {
+    list.innerHTML = plan.map((d) => `<li class="disc">Disc ${esc(d.disc_label)}</li>` +
+      d.files.map((f) => `<li>${esc(f.split("/").pop().replace(/\.mkv$/, ""))}</li>`).join("")).join("");
+  };
+  draw(members.map((m) => ({ disc_label: m.disc_label, files: m.titles.map((t) => t.proposed || "?") })));
+  let timer;
+  const refresh = () => {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      try { draw(await api("GET", `/api/pending/${head.id}/preview?` + new URLSearchParams(params()))); }
+      catch (e) { list.innerHTML = `<li class="reason">${esc(e.message)}</li>`; }
+    }, 500);
+  };
+  el.querySelectorAll("input").forEach((i) => (i.oninput = refresh));
+  el.querySelector("[data-a=ok]").onclick = (e) =>
+    act(e.target, () => api("POST", `/api/pending/${head.id}/answer`, params()), "Filed into the library");
+  el.querySelector("[data-a=discard]").onclick = (e) => {
+    const names = members.map((m, i) => `${i + 1}: ${m.disc_label} (${m.titles.length} titles)`).join("\n");
+    const n = parseInt(prompt(`Delete which disc's rip?\n${names}`, ""), 10);
+    if (members[n - 1] && confirm(`Delete the ripped files of ${members[n - 1].disc_label}?`))
+      act(e.target, () => api("POST", `/api/pending/${members[n - 1].id}/discard`), "Discarded");
+  };
+}
+
+function filmCard(el, p) {
+  el.innerHTML = `
+    <div class="title">Name this film</div>
+    <div class="sub">Disc label ${esc(p.disc_label || "(none)")} isn't a usable name · ${hms(p.titles[0].duration_s)}</div>
+    <label>Name (add a year in brackets only if you know it, e.g. Alien (1979))</label>
+    <input type="text" name="name" value="${esc(p.suggested.name || "")}" placeholder="Film name">
+    <div class="row"><button class="primary" data-a="ok">Save</button><button class="danger small" data-a="discard">Discard rip</button></div>`;
+  el.querySelector("[data-a=ok]").onclick = (e) =>
+    act(e.target, () => api("POST", `/api/pending/${p.id}/answer`, { name: el.querySelector("[name=name]").value }), "Filed into Movies");
+  el.querySelector("[data-a=discard]").onclick = (e) => {
+    if (confirm("Delete this rip?")) act(e.target, () => api("POST", `/api/pending/${p.id}/discard`), "Discarded");
+  };
+}
+
+function chooseCard(el, p) {
+  const picked = p.answer;
+  el.innerHTML = `
+    <div class="title">Which titles?</div>
+    <div class="sub">${esc(p.disc_label || "Disc")}: not sure what this disc is. ${picked ? "Choice saved: it rips when the disc is in." : "The disc stays in the drive."}</div>
+    ${p.titles.map((t) => `<label class="check"><input type="checkbox" value="${t.index}" ${picked && picked.titles.includes(t.index) ? "checked" : ""}>
+      <span>Title ${t.index} · ${hms(t.duration_s)} · ${(t.size / 1e9).toFixed(1)} GB · ${t.chapters} ch</span></label>`).join("")}
+    <div class="row">
+      <span class="seg"><label><input type="radio" name="k-${p.id}" value="film" checked><span>Film</span></label><label><input type="radio" name="k-${p.id}" value="tv" ${picked && picked.kind === "tv" ? "checked" : ""}><span>Episodes</span></label></span>
+    </div>
+    <div class="row"><button class="primary" data-a="ok">Rip these</button><button class="danger small" data-a="discard">Skip this disc</button></div>`;
+  el.querySelector("[data-a=ok]").onclick = (e) => {
+    const titles = [...el.querySelectorAll("input[type=checkbox]:checked")].map((c) => +c.value);
+    const kind = el.querySelector(`input[name="k-${p.id}"]:checked`).value;
+    act(e.target, async () => {
+      const r = await api("POST", `/api/pending/${p.id}/answer`, { titles, kind });
+      toast(r.started ? "Ripping…" : "Saved: it rips when the disc is in the drive");
+    });
+  };
+  el.querySelector("[data-a=discard]").onclick = (e) => {
+    if (confirm("Forget this disc's prompt? (Eject it afterwards.)")) act(e.target, () => api("POST", `/api/pending/${p.id}/discard`), "Done");
+  };
+}
+
+// ---------------------------------------------------------------- history, known discs
+let lastJobId = null;
+async function refreshHistory() {
+  try {
+    const h = await api("GET", "/api/history");
+    const now = new Date().toISOString();
+    $("#history").innerHTML = h.length ? h.slice(0, 25).map((j) => `
+      <div class="hist" data-id="${esc(j.id)}">
+        <div><div>${esc(j.title || "Disc")}</div><div class="sub">${esc(j.type || "")}${j.error ? " · " + esc(j.error) : ""}</div></div>
+        <div class="res-${esc(j.result)}" style="text-align:right;white-space:nowrap">${RESULT[j.result] || ""} ${esc(j.result)}<div class="sub">${ago(j.finished_at, now)} ago</div></div>
+      </div>`).join("") : '<div class="empty">Nothing ripped yet.</div>';
+    $("#history").querySelectorAll(".hist").forEach((row) => (row.onclick = () => showLog(row)));
+  } catch (e) { $("#history").innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+}
+async function showLog(row) {
+  const next = row.nextElementSibling;
+  if (next && next.tagName === "PRE") { next.remove(); return; }
+  try {
+    const r = await api("GET", `/api/log/${row.dataset.id}?lines=300`);
+    const pre = document.createElement("pre");
+    pre.textContent = r.lines.join("\n");
+    row.after(pre);
+  } catch (e) { toast(e.message); }
+}
+$("#known-d").ontoggle = async () => {
+  if (!$("#known-d").open) return;
+  const k = await api("GET", "/api/known-discs");
+  const rows = Object.entries(k);
+  $("#known").innerHTML = rows.length ? rows.map(([fp, d]) => `
+    <div class="hist"><div><div>${esc(d.name || `${d.show} season ${d.season} from E${d.first_episode}`)}</div>
+      <div class="sub">${esc(d.label)} · ${esc(d.kind)}</div></div>
+      <button class="small danger" data-fp="${esc(fp)}">Forget</button></div>`).join("")
+    : '<div class="empty">None yet.</div>';
+  $("#known").querySelectorAll("button").forEach((b) => (b.onclick = () => {
+    if (confirm("Forget this answer? The disc will ask again.")) act(b, () => api("DELETE", `/api/known-discs/${encodeURIComponent(b.dataset.fp)}`), "Forgotten").then(() => $("#known-d").ontoggle());
+  }));
+};
+
+// ---------------------------------------------------------------- loop
+async function poll() {
+  try {
+    const s = await api("GET", "/api/status");
+    last = s;
+    renderChips(s); renderBanners(s); renderNow(s); renderQueue(s);
+    const jid = s.last_job && s.last_job.id;
+    if (jid !== lastJobId) { lastJobId = jid; refreshHistory(); }
+  } catch (e) {
+    $("#banners").innerHTML = `<div class="banner bad">Can't reach discrip: ${esc(e.message)}</div>`;
+  }
+}
+showTokenState();
+poll();
+setInterval(() => { if (!document.hidden) poll(); }, 2000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
+</script>
+</body>
+</html>

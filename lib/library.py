@@ -5,6 +5,7 @@ Files are moved with link + unlink, so an existing file is never overwritten,
 except a file this same disc (fingerprint) wrote before, which a re-rip replaces.
 """
 import contextlib
+import fcntl
 import functools
 import hashlib
 import json
@@ -52,6 +53,14 @@ def jellyfin_refresh(cfg):
             log.info("Jellyfin library refresh requested (HTTP %s)", r.status)
     except OSError as e:
         log.warning("Jellyfin library refresh failed: %s", e)
+
+
+@contextlib.contextmanager
+def filing_lock(cfg):
+    """Serialises filing into the library (the ripper and the web app both file)."""
+    with open(_store(cfg, ".filing.lock"), "a") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        yield
 
 
 # ---------------------------------------------------------------- fingerprints
@@ -347,6 +356,11 @@ def _renumber(cfg, key, members, cont):
 
 
 def settle_season(cfg, key):
+    with filing_lock(cfg):
+        return _settle_season(cfg, key)
+
+
+def _settle_season(cfg, key):
     """File waiting discs of a season from the front for as long as each needs no
     answer. Returns the ids filed. Spec 8.4 / [video] tv_confirm:
       always       never file without an answer
@@ -386,6 +400,11 @@ def settle_season(cfg, key):
 
 
 def answer_season(cfg, pending_id, show=None, season=None, first_episode=None, year=None):
+    with filing_lock(cfg):
+        return _answer_season(cfg, pending_id, show, season, first_episode, year)
+
+
+def _answer_season(cfg, pending_id, show=None, season=None, first_episode=None, year=None):
     """The user's answer for a season: applies to the first waiting disc of the
     season pending_id belongs to (overrides change the whole season), then files
     every later disc that follows on. Returns the ids filed."""
@@ -410,7 +429,49 @@ def answer_season(cfg, pending_id, show=None, season=None, first_episode=None, y
     first = first_episode or (_read(cfg, "tv_continuation.json").get(new_key) or {}).get(
         "next_episode") or (sug["first_episode"] if new_key == key else 1)
     apply_tv_plan(cfg, head["id"], show, season, first, year)
-    return [head["id"]] + settle_season(cfg, new_key)
+    return [head["id"]] + _settle_season(cfg, new_key)
+
+
+def preview_season(cfg, pending_id, show=None, season=None, first_episode=None, year=None):
+    """What answer_season would do, without doing it: [{id, disc_label, files}]."""
+    item = discrip.get_pending(cfg, pending_id)
+    if not item or item["prompt"] != "tv_plan":
+        raise PlanError(f"no tv_plan prompt {pending_id}")
+    members = season_members(cfg, item["group"])
+    sug = members[0]["suggested"]
+    show = naming.sanitise(show or sug["show"] or "") or "Unknown"
+    season = season or sug["season"]
+    year = year or sug.get("year")
+    cont = continuation(cfg, show, season) or {}
+    first = first_episode or cont.get("next_episode") or sug["first_episode"] or 1
+    out = []
+    for m in members:
+        paths = proposed_plan(cfg, show, season, first, len(m["titles"]), year)
+        out.append({"id": m["id"], "disc_label": m["disc_label"],
+                    "files": [str(p.relative_to(cfg["paths"]["media"])) for p in paths]})
+        first += len(m["titles"])
+    return out
+
+
+def answer_choose_titles(cfg, pending_id, indexes, kind):
+    """Record which titles to rip from an ambiguous disc, and as what. The rip runs
+    when the disc is next ready (the caller starts it if the disc is in now)."""
+    item = discrip.get_pending(cfg, pending_id)
+    if not item or item["prompt"] != "choose_titles":
+        raise PlanError(f"no choose_titles prompt {pending_id}")
+    known_idx = {t["index"] for t in item["titles"]}
+    indexes = sorted(set(int(i) for i in indexes))
+    if not indexes or not set(indexes) <= known_idx:
+        raise PlanError("choose at least one of the listed titles")
+    if kind not in ("film", "tv"):
+        raise PlanError("kind must be film or tv")
+    if kind == "film" and len(indexes) != 1:
+        raise PlanError("a film is one title")
+    with discrip.state_update(cfg) as state:
+        for p in state["pending"]:
+            if p["id"] == pending_id:
+                p["answer"] = {"titles": indexes, "kind": kind}
+    log.info("%s: rip titles %s as %s", pending_id, indexes, kind)
 
 
 # ---------------------------------------------------------------- notifications

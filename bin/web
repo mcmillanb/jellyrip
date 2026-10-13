@@ -1,0 +1,264 @@
+#!/usr/bin/env python3
+"""discrip web app (spec section 9): status, queue answers and controls.
+
+Read-only GETs are open on the LAN; POST/DELETE need the shared token from
+[web] token in discrip.toml, sent as "Authorization: Bearer <token>".
+Serves web/index.html (the page) and web/pill.js (Jellyfin header pill).
+"""
+import hmac
+import logging
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+from flask import Flask, abort, jsonify, request, send_from_directory
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "lib"))
+import discrip  # noqa: E402
+import library  # noqa: E402
+
+WEB = ROOT / "web"
+app = Flask(__name__, static_folder=None)
+log = logging.getLogger("web")
+cfg = discrip.load_config()
+
+THROTTLE_BITS = {  # vcgencmd get_throttled
+    0: "under-voltage now", 1: "CPU frequency capped now", 2: "throttled now",
+    3: "temperature limit now", 16: "under-voltage since boot",
+    17: "frequency capped since boot", 18: "throttled since boot",
+    19: "temperature limit since boot",
+}
+
+
+def health():
+    h = {"temp_c": None, "throttled": None, "throttle_flags": [], "free_gb": None,
+         "total_gb": None, "min_free_gb": cfg["dispatch"]["min_free_gb"]}
+    try:
+        h["temp_c"] = round(int(Path("/sys/class/thermal/thermal_zone0/temp")
+                                .read_text()) / 1000, 1)
+    except (OSError, ValueError):
+        pass
+    try:
+        out = subprocess.run(["vcgencmd", "get_throttled"], capture_output=True, text=True,
+                             timeout=5).stdout
+        value = int(out.strip().split("=")[1], 16)
+        h["throttled"] = hex(value)
+        h["throttle_flags"] = [t for b, t in THROTTLE_BITS.items() if value >> b & 1]
+    except (OSError, ValueError, IndexError, subprocess.TimeoutExpired):
+        pass
+    try:
+        du = shutil.disk_usage(cfg["paths"]["media"])
+        h["free_gb"], h["total_gb"] = round(du.free / 1e9, 1), round(du.total / 1e9, 1)
+    except OSError:
+        pass
+    return h
+
+
+def rip_unit_state():
+    return subprocess.run(["systemctl", "is-active", cfg["dispatch"]["rip_unit"]],
+                          capture_output=True, text=True).stdout.strip()
+
+
+def ripping():
+    return rip_unit_state() in ("active", "activating", "deactivating", "reloading")
+
+
+def systemctl(verb):
+    r = subprocess.run(["systemctl", verb, "--no-block", cfg["dispatch"]["rip_unit"]],
+                       capture_output=True, text=True)
+    if r.returncode:
+        abort(500, r.stderr.strip() or f"systemctl {verb} failed")
+
+
+def require_token():
+    token = cfg["web"]["token"]
+    sent = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+    if not token or not hmac.compare_digest(sent, token):
+        abort(401, "wrong or missing token")
+
+
+def body():
+    return request.get_json(silent=True) or {}
+
+
+@app.errorhandler(400)
+@app.errorhandler(401)
+@app.errorhandler(404)
+@app.errorhandler(409)
+@app.errorhandler(500)
+def error(e):
+    return jsonify(error=e.description), e.code
+
+
+@app.after_request
+def cors(resp):
+    # The Jellyfin header pill (another port, so another origin) reads the status.
+    if request.path == "/api/status":
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+# ---------------------------------------------------------------- pages
+
+
+@app.get("/")
+def index():
+    return send_from_directory(WEB, "index.html")
+
+
+@app.get("/<path:name>")
+def static_file(name):
+    if name in ("pill.js", "icon.png", "manifest.json"):
+        return send_from_directory(WEB, name)
+    abort(404, "not found")
+
+
+# ---------------------------------------------------------------- read-only
+
+
+@app.get("/api/status")
+def status():
+    state = discrip.read_state(cfg)
+    last = state.pop("history", [])[:1]
+    return jsonify(state=state, last_job=last[0] if last else None, health=health(),
+                   rip_unit=rip_unit_state(), auto_start=cfg["dispatch"]["auto_start"],
+                   now=discrip.now_iso())
+
+
+@app.get("/api/history")
+def history():
+    return jsonify(discrip.read_state(cfg)["history"])
+
+
+@app.get("/api/log/<job_id>")
+def job_log(job_id):
+    if not re.fullmatch(r"\d{8}-\d{6}", job_id):
+        abort(400, "bad job id")
+    path = Path(cfg["paths"]["state_dir"]) / "logs" / f"{job_id}.log"
+    if not path.exists():
+        abort(404, "no log for that job")
+    lines = min(int(request.args.get("lines", 200)), 5000)
+    return jsonify(lines=path.read_text(errors="replace").splitlines()[-lines:])
+
+
+@app.get("/api/known-discs")
+def known_discs():
+    return jsonify(library.known_discs(cfg))
+
+
+@app.get("/api/pending/<pid>/preview")
+def preview(pid):
+    a = request.args
+    try:
+        return jsonify(library.preview_season(
+            cfg, pid, a.get("show") or None, int(a["season"]) if a.get("season") else None,
+            int(a["first_episode"]) if a.get("first_episode") else None,
+            int(a["year"]) if a.get("year") else None))
+    except (library.PlanError, ValueError) as e:
+        abort(400, str(e))
+
+
+# ---------------------------------------------------------------- controls
+
+
+@app.post("/api/eject")
+def eject():
+    require_token()
+    if ripping() and not body().get("force"):
+        abort(409, "a rip is running: cancel it first")
+    dev = discrip.find_drive(cfg)
+    if dev is None:
+        abort(409, "no drive found")
+    if not discrip.eject(dev):
+        abort(500, "the tray did not open")
+    return jsonify(ok=True)
+
+
+@app.post("/api/cancel")
+def cancel():
+    require_token()
+    if not ripping():
+        abort(409, "nothing is running")
+    systemctl("stop")
+    return jsonify(ok=True)
+
+
+@app.post("/api/start")
+def start():
+    """Start a rip of the disc in the drive. {"rerip": true} rips it even if it is
+    already in the library."""
+    require_token()
+    if ripping():
+        abort(409, "a rip is already running")
+    if body().get("rerip"):
+        # Consumed by the next rip: now if the disc is in, else at the next insert.
+        (Path(cfg["paths"]["run_dir"]) / "rerip").touch()
+    if discrip.read_state(cfg)["drive"].get("status") != "ready":
+        if body().get("rerip"):
+            return jsonify(ok=True, started=False)
+        abort(409, "no disc ready in the drive")
+    systemctl("start")
+    return jsonify(ok=True, started=True)
+
+
+@app.post("/api/pending/<pid>/answer")
+def answer(pid):
+    require_token()
+    item = discrip.get_pending(cfg, pid)
+    if not item:
+        abort(404, "no such prompt")
+    b = body()
+    try:
+        if item["prompt"] == "tv_plan":
+            filed = library.answer_season(
+                cfg, pid, b.get("show") or None, int(b["season"]) if b.get("season") else None,
+                int(b["first_episode"]) if b.get("first_episode") else None,
+                int(b["year"]) if b.get("year") else None)
+            return jsonify(ok=True, filed=filed)
+        if item["prompt"] == "name_film":
+            dest = library.answer_name_film(cfg, pid, b.get("name", ""))
+            return jsonify(ok=True, output=str(dest))
+        if item["prompt"] == "choose_titles":
+            library.answer_choose_titles(cfg, pid, b.get("titles", []), b.get("kind"))
+            started = False
+            if discrip.read_state(cfg)["drive"].get("status") == "ready" and not ripping():
+                systemctl("start")
+                started = True
+            return jsonify(ok=True, started=started)
+    except (library.PlanError, ValueError) as e:
+        abort(400, str(e))
+    abort(400, f"unknown prompt {item['prompt']}")
+
+
+@app.post("/api/pending/<pid>/discard")
+def discard(pid):
+    require_token()
+    try:
+        library.discard(cfg, pid)
+    except library.PlanError as e:
+        abort(404, str(e))
+    return jsonify(ok=True)
+
+
+@app.delete("/api/known-discs/<fp>")
+def forget(fp):
+    require_token()
+    if not library.forget(cfg, fp):
+        abort(404, "no such disc")
+    return jsonify(ok=True)
+
+
+def main():
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
+    if not cfg["web"]["token"]:
+        log.warning("[web] token is empty: every control will be refused")
+    # Flask's server is enough for a handful of LAN clients polling every 2 s.
+    app.run(host="0.0.0.0", port=cfg["web"]["port"], threaded=True)
+
+
+if __name__ == "__main__":
+    main()

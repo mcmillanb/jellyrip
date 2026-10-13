@@ -33,6 +33,10 @@ api_key = ""               # Dashboard -> API Keys; empty disables refreshes
 abcde_conf = "/opt/discrip/abcde.conf"  # installed from config/abcde.conf
 rip_timeout = 3600
 
+[web]
+port = 8080
+token = ""                 # shared secret for the web app's buttons; 03-discrip.sh fills it in
+
 [notify]
 jellyfin_popup = true      # pop up prompts and failures in open Jellyfin apps (web, phone)
 popup_seconds = 0          # 0 = dialog that stays until OK; >0 = brief toast (Jellyfin ignores the length)

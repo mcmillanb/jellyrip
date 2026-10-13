@@ -167,14 +167,14 @@ def file_film(cfg, job_id, label, disc_name, title, mkv, workdir, fp, known):
     if known and known.get("kind") == "film":
         name = known["name"]
         log.info("known disc: named %r before", name)
-        dest = library.place_film(cfg, mkv, name, fp)
     elif naming.is_junk(disc_name, name, vc["junk_labels"]):
         log.info("label %r is junk; parking in _inbox for a name", disc_name)
-    else:
+        name = None
+    if name:
         dest = library.place_film(cfg, mkv, name, fp)
-    if dest is None and name:
-        log.warning("Movies/%s already has two copies from other discs; parking in _inbox",
-                    name)
+        if dest is None:
+            log.warning("Movies/%s already has two copies from other discs; parking in "
+                        "_inbox", name)
     discrip.update_job(cfg, title=name or disc_name)
     if dest:
         workdir.rmdir()
@@ -189,7 +189,7 @@ def file_film(cfg, job_id, label, disc_name, title, mkv, workdir, fp, known):
         "prompt": "name_film",
         "disc_label": label,
         "fingerprint": fp,
-        "suggested": {"name": name},
+        "suggested": {"name": name or ""},
         "titles": [{"index": title["index"], "duration_s": title["duration_s"],
                     "file": str(inbox / mkv.name)}],
         "inbox_path": str(inbox),
@@ -234,8 +234,9 @@ def file_tv(cfg, job_id, label, disc_name, chosen, mkvs, workdir, fp, known):
         log.info("known disc: %s season %d from episode %d", show, season,
                  known["first_episode"])
         try:
-            dests = library.apply_tv_plan(cfg, job_id, show, season,
-                                          known["first_episode"], year)
+            with library.filing_lock(cfg):
+                dests = library.apply_tv_plan(cfg, job_id, show, season,
+                                              known["first_episode"], year)
             return str(dests[0].parent)
         except library.PlanError as e:
             log.warning("could not file as before (%s); asking instead", e)
@@ -275,13 +276,27 @@ def rip_dvd(cfg, dev, job_id, label, uuid=None, force=False):
 
     fp = library.fingerprint(label, uuid, [t["duration_s"] for t in titles])
     log.info("fingerprint %s", fp)
-    if not force:
+    picked = next((p for p in discrip.read_state(cfg)["pending"]
+                   if p["prompt"] == "choose_titles" and p.get("fingerprint") == fp
+                   and p.get("answer")), None)
+    if picked:
+        # The user chose titles for this disc earlier (web app / CLI).
+        kind = picked["answer"]["kind"]
+        chosen = [t for t in titles if t["index"] in picked["answer"]["titles"]]
+        log.info("using the chosen titles %s as %s (prompt %s)",
+                 [t["index"] for t in chosen], kind, picked["id"])
+        discrip.resolve_pending(cfg, picked["id"], None)
+        discrip.update_job(cfg, kind=kind)
+    elif not force:
         done = library.already_ripped(cfg, fp)
         if done:
             log.info("already ripped (job %s): %s", done["job_id"], done["outputs"][0])
             return "skipped", "already in the library", done["outputs"][0], True
         waiting = next((p for p in discrip.read_state(cfg)["pending"]
                         if p.get("fingerprint") == fp), None)
+        if waiting and waiting["prompt"] == "choose_titles":
+            log.info("waiting for titles to be chosen (%s); leaving the disc in", waiting["id"])
+            return "skipped", "choose the titles to rip", None, False
         if waiting:
             log.info("already ripped, waiting for an answer (%s)", waiting["id"])
             return ("skipped", f"already ripped, waiting for an answer ({waiting['id']})",

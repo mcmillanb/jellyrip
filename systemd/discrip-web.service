@@ -1,0 +1,15 @@
+[Unit]
+Description=discrip: web app (status, queue, controls) on port 8080
+RequiresMountsFor=/srv /var/lib/discrip
+After=network-online.target
+
+[Service]
+Type=simple
+User=@OWNER@
+UMask=0002
+ExecStart=/opt/discrip/bin/web
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,9 @@
+{
+  "name": "discrip",
+  "short_name": "discrip",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#16181d",
+  "theme_color": "#2f6fd6",
+  "icons": [{"src": "icon.png", "sizes": "180x180", "type": "image/png"}]
+}
