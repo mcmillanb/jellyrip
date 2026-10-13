@@ -25,6 +25,9 @@ def tidy_label(label, noise):
         if re.fullmatch(r"(DIS[CK]|D)\d*", words[-1], re.I):
             words.pop()
             continue
+        if len(words) > 1 and words[-1].isdigit() and re.fullmatch(r"DIS[CK]|D", words[-2], re.I):
+            del words[-2:]  # DISC 1
+            continue
         tail = next((p for p in phrases if [w.upper() for w in words[-len(p):]] == p), None)
         if tail is None or len(tail) == len(words):
             break
