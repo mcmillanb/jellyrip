@@ -297,7 +297,7 @@ Auth and exposure:
 4. Jellyfin refresh: API call after move, or rely on its own scanning? **Decided 2026-10-13:** API call (`/Library/Refresh`) after every move; the folder watcher skips libraries that were empty at the last scan.
 5. TVmaze lookup on by default? Defaulted to on in step 6 (`[video] tv_lookup`); confirm with the user.
 6. Include DVD extras by default? (Proposed: no.)
-7. Hostname, web port, Samba username.
+7. Hostname, web port, Samba username. (Hostname `jellyfin`; Samba user `jellyfin`, share `media` (setup/09-samba.sh); web port still open.)
 8. Whether to keep a copy of the MakeMKV log with each rip.
 
 ## 12. Build order
