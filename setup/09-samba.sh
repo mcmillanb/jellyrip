@@ -23,7 +23,8 @@ cat > "$CONF" <<EOF
    panic action = /usr/share/samba/panic-action %d
 
    # LAN only, authenticated only, no SMB1.
-   hosts allow = 127. 192.168.
+   # IPv6 link-local (fe80::/10) never leaves the LAN; macOS prefers it for .local.
+   hosts allow = 127. ::1 192.168. fe80::/10
    map to guest = never
    server min protocol = SMB2_10
    # Setting a Samba password must not change the Linux login password.
