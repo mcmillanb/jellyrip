@@ -1,0 +1,12 @@
+[Unit]
+Description=discrip: classify and rip the disc in the drive
+RequiresMountsFor=/srv /var/lib/discrip
+
+[Service]
+Type=oneshot
+User=@OWNER@
+ExecStart=/opt/discrip/bin/dispatch
+# Kill the whole process group (makemkvcon included) on stop/cancel.
+KillMode=control-group
+# Scans of protected discs alone can take 15 min; a full rip well over an hour.
+TimeoutStartSec=4h

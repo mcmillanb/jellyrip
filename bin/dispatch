@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+"""Classify the disc in the drive and hand it to the right ripper (spec 6.2).
+
+Started by discrip-watcher via discrip-rip.service. Reads the disc itself rather
+than trusting udev properties: dvd-reset-auth, then cdrom_id and blkid -p.
+Build step 3: classification and eject only, no rippers yet.
+"""
+import logging
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+BIN = Path(__file__).resolve().parent
+sys.path.insert(0, str(BIN.parent / "lib"))
+import discrip  # noqa: E402
+
+log = logging.getLogger("dispatch")
+
+
+def run(cmd, timeout=60):
+    """Run cmd, log it, return (returncode, stdout)."""
+    t0 = time.monotonic()
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        log.error("%s: timed out after %ss", cmd[0], timeout)
+        return None, ""
+    log.info("%s: rc=%s in %.1fs", " ".join(map(str, cmd)), r.returncode, time.monotonic() - t0)
+    if r.stderr.strip():
+        log.info("  stderr: %s", r.stderr.strip())
+    return r.returncode, r.stdout
+
+
+def export_vars(text):
+    """Parse KEY=value lines (cdrom_id, blkid -o export)."""
+    return dict(line.split("=", 1) for line in text.splitlines() if "=" in line)
+
+
+def wait_ready(dev, timeout):
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            code = discrip.drive_status(dev)
+        except OSError as e:
+            code = None
+            log.warning("drive status failed: %s", e)
+        if code == discrip.CDS_DISC_OK:
+            return True
+        if time.monotonic() > deadline:
+            log.error("drive not ready after %ss (status %s)", timeout,
+                      discrip.DRIVE_STATUS.get(code, code))
+            return False
+        time.sleep(1)
+
+
+def classify(cd):
+    """Media type from cdrom_id properties."""
+    if cd.get("ID_CDROM_MEDIA") != "1":
+        return "none"
+    if any(k.startswith("ID_CDROM_MEDIA_BD") for k in cd):
+        return "bluray"
+    if any(k.startswith("ID_CDROM_MEDIA_DVD") or k.startswith("ID_CDROM_MEDIA_HDDVD") for k in cd):
+        return "dvd"
+    if int(cd.get("ID_CDROM_MEDIA_TRACK_COUNT_AUDIO", 0)) > 0:
+        return "audio"
+    if any(k.startswith("ID_CDROM_MEDIA_CD") for k in cd):
+        return "data_cd"
+    return "unknown"
+
+
+def main():
+    cfg = discrip.load_config()
+    job_id = time.strftime("%Y%m%d-%H%M%S")
+    log_dir = Path(cfg["paths"]["state_dir"]) / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    job_log = logging.FileHandler(log_dir / f"{job_id}.log")
+    job_log.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    logging.getLogger().addHandler(job_log)
+    log.info("job %s", job_id)
+
+    if not os.path.ismount("/srv"):
+        log.error("/srv is not mounted; refusing to run")
+        return 1
+
+    dev = discrip.find_drive(cfg)
+    if dev is None:
+        log.error("no drive found (%s)", ", ".join(cfg["drive"]["device"]))
+        return 1
+    log.info("drive %s", dev)
+    if not wait_ready(dev, cfg["drive"]["ready_timeout"]):
+        return 1
+    # Before anything else: stuck CSS AGIDs make MakeMKV fail with "Failed to
+    # open disc". Harmless (rc=1) on a CD.
+    run([BIN / "dvd-reset-auth", dev], timeout=30)
+
+    cd = export_vars(run(["/usr/lib/udev/cdrom_id", dev])[1])
+    media = classify(cd)
+    fs = {}
+    if media in ("dvd", "bluray", "data_cd"):
+        fs = export_vars(run(["blkid", "-p", "-o", "export", dev])[1])
+    label = fs.get("LABEL")
+    log.info("media=%s label=%s uuid=%s fstype=%s audio_tracks=%s data_tracks=%s",
+             media, label, fs.get("UUID"), fs.get("TYPE"),
+             cd.get("ID_CDROM_MEDIA_TRACK_COUNT_AUDIO", 0),
+             cd.get("ID_CDROM_MEDIA_TRACK_COUNT_DATA", 0))
+
+    with discrip.state_update(cfg) as state:
+        state["drive"]["media"] = media
+        state["drive"]["label"] = label
+
+    if media == "dvd":
+        log.info("would rip: video DVD (video ripper not built yet)")
+    elif media == "audio":
+        log.info("would rip: audio CD (audio ripper not built yet)")
+    elif media == "bluray":
+        log.error("Blu-ray not supported")
+    else:
+        log.error("no ripper for media type %r", media)
+
+    if cfg["dispatch"]["eject_when_done"]:
+        if discrip.eject(dev):
+            log.info("ejected")
+        else:
+            log.error("eject failed: tray did not open")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

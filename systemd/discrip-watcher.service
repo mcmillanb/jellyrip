@@ -1,0 +1,14 @@
+[Unit]
+Description=discrip: watch the DVD drive and start a rip on disc insert
+RequiresMountsFor=/srv /var/lib/discrip
+
+[Service]
+Type=notify
+User=@OWNER@
+ExecStart=/opt/discrip/bin/watcher
+Restart=always
+RestartSec=5
+WatchdogSec=30
+
+[Install]
+WantedBy=multi-user.target

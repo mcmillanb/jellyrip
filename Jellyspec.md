@@ -77,7 +77,7 @@ Decision (2026-10-13): detection uses a **polling watcher service**, not a udev 
 
 ### 6.1 Watcher (`discrip-watcher.service`)
 
-- Long-running Python service (`/opt/discrip/bin/watcher`), `Type=notify`, `Restart=always`, `WatchdogSec=30`. It sends `WATCHDOG=1` after every successful poll, so a hung poll gets it restarted.
+- Long-running Python service (`/opt/discrip/bin/watcher`), `Type=notify`, `Restart=always`, `WatchdogSec=30`, running as the unprivileged user (`cdrom` group). The poll runs in a worker thread, so a poll stuck in the kernel is reported as `unresponsive` rather than freezing the loop (a process stuck in an uninterruptible ioctl couldn't be restarted anyway); the main loop sends `WATCHDOG=1` every iteration, so a hung loop gets restarted. A polkit rule (`systemd/50-discrip.rules`) lets that user start/stop `discrip-rip.service`.
 - Every 2 s: open the drive by a stable path (`/dev/disk/by-path/...` or by-id, falling back to `/dev/sr0`) with `O_RDONLY|O_NONBLOCK`, call `ioctl(CDROM_DRIVE_STATUS)`, close it. Reopen on every poll so a USB re-enumeration (renumbered or recreated `/dev/sr0`) is handled without special cases. The status query does not spin the disc.
 - Drive states: `1` no disc, `2` tray open, `3` not ready (spinning up, about 8 s after the tray closes), `4` disc ready. A swap looks like 4 → 2 → 3 → 4.
 - **Trigger:** a transition into `4` from any other state starts `discrip-rip.service` (oneshot, runs `/opt/discrip/bin/dispatch`). The watcher never rips itself, so a rip can't block polling.

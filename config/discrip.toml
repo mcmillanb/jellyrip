@@ -1,0 +1,23 @@
+# discrip configuration. Installed to /opt/discrip/discrip.toml by setup/03-discrip.sh
+# (only if absent, so local edits survive re-installs). Unset keys use the defaults
+# in lib/discrip.py.
+
+[paths]
+media = "/srv/media"
+state_dir = "/var/lib/discrip"
+run_dir = "/run/discrip"
+
+[drive]
+# First existing path wins. The by-id link is stable across USB re-enumeration.
+device = [
+    "/dev/disk/by-id/usb-PIONEER_DVD-RW_DVRTD11RS_534743333230303839392020-0:0",
+    "/dev/sr0",
+]
+poll_interval = 2        # seconds between CDROM_DRIVE_STATUS polls
+unresponsive_after = 30  # seconds of failed/stuck polls before "drive not responding"
+ready_timeout = 60       # dispatch: seconds to wait for "disc ready"
+
+[dispatch]
+auto_start = true        # start a rip when a disc becomes ready
+rip_unit = "discrip-rip.service"
+eject_when_done = true

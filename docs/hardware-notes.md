@@ -32,6 +32,8 @@ If it recurs, use a powered USB hub with backfeed protection for the DVD drive. 
 - **Rip speed:** 5-9 MB/s (about 4-7x DVD speed). Full Monty title: 3.9 GB in 12m46s. Mirrormask: 4.5 GB in 8m11s.
 - **Missing udev properties:** after a disc insert, `ID_CDROM_MEDIA` and `ID_FS_LABEL` were missing twice until `udevadm trigger --action=change /dev/sr0`. Kernel uevents do arrive (eject request, media change at tray close, another media change about 8 s later when ready), but the props aren't reliable. Hence the polling watcher (spec section 6).
 - **Wedged bridge:** the drive's USB bridge can wedge (it shows up on USB but its SCSI probe never completes, so there's no `/dev/sr0`). A Pi reboot doesn't clear it while the drive has its own power: power-cycle the drive.
+- **Eject:** a bare `CDROMEJECT` ioctl returns 0 but the drive refuses with sense 5/53/02 (medium removal prevented) and the tray stays shut. util-linux `eject` works; `lib/discrip.py` uses it and confirms the tray opened.
+- **Spin-up time varies:** after closing the tray the drive reported "not ready" for 9-22 s before "ready", and `CDROM_DRIVE_STATUS` can drop back briefly just after, so dispatch waits for ready again.
 - The kernel media poll is 2000 ms (`events_dfl_poll_msecs`), and the drive's USB `power/control` is `on` (no autosuspend).
 
 ## Software notes
