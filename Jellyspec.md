@@ -55,7 +55,7 @@ Single drive holds the OS and the library. Keep it simple: one root filesystem (
 
 ## 5. Components
 
-1. **udev rule + systemd template unit**: disc detection and triggering.
+1. **watcher service**: polls the drive and triggers a rip on disc insert (section 6).
 2. **dispatcher**: classifies the disc type (audio / video) and calls the right ripper.
 3. **ripper-video**: MakeMKV wrapper, disc classification (film vs season), naming.
 4. **ripper-audio**: abcde wrapper.
@@ -66,14 +66,26 @@ Single drive holds the OS and the library. Keep it simple: one root filesystem (
 
 ## 6. Disc detection and triggering
 
-Important constraint: udev kills long-running processes started directly from a rule. The rule must only start a systemd service; the service does the work.
+Decision (2026-10-13): detection uses a **polling watcher service**, not a udev rule. On this drive (Pioneer DVRTD11RS behind an Initio INIC-1618L USB bridge), udev media properties (`ID_CDROM_MEDIA`, `ID_FS_LABEL`) were missing twice after a disc insert until `udevadm trigger --action=change /dev/sr0` was run by hand. The drive has no asynchronous media notification, so the kernel's own uevents come from it polling every 2 s (`events_dfl_poll_msecs=2000`) anyway; asking the drive directly is no less reliable and does not depend on udev's cached properties.
 
-- Rule on the optical device, on media-change events when media is present. Use `udevadm monitor --property` and `udevadm info /dev/sr0` with a disc inserted to find the right properties; do not guess. Likely candidates: `ACTION=="change"`, `ENV{ID_CDROM_MEDIA}=="1"` (or `DISK_MEDIA_CHANGE`).
-- Rule sets `TAG+="systemd"` and `ENV{SYSTEMD_WANTS}="discrip@%k.service"`.
-- `discrip@.service` is `Type=oneshot` and runs `/opt/discrip/bin/dispatch %I`.
-- Classification uses udev properties of the inserted media, e.g. `ID_CDROM_MEDIA_TRACK_COUNT_AUDIO` (audio CD), `ID_CDROM_MEDIA_DVD`, `ID_CDROM_MEDIA_BD`. Verify the exact names on this system.
-- Handle the drive spinning up slowly: retry reading media state for a short period before declaring "no readable disc".
+### 6.1 Watcher (`discrip-watcher.service`)
+
+- Long-running Python service (`/opt/discrip/bin/watcher`), `Type=notify`, `Restart=always`, `WatchdogSec=30`. It sends `WATCHDOG=1` after every successful poll, so a hung poll gets it restarted.
+- Every 2 s: open the drive by a stable path (`/dev/disk/by-path/...` or by-id, falling back to `/dev/sr0`) with `O_RDONLY|O_NONBLOCK`, call `ioctl(CDROM_DRIVE_STATUS)`, close it. Reopen on every poll so a USB re-enumeration (renumbered or recreated `/dev/sr0`) is handled without special cases. The status query does not spin the disc.
+- Drive states: `1` no disc, `2` tray open, `3` not ready (spinning up, about 8 s after the tray closes), `4` disc ready. A swap looks like 4 → 2 → 3 → 4.
+- **Trigger:** a transition into `4` from any other state starts `discrip-rip.service` (oneshot, runs `/opt/discrip/bin/dispatch`). The watcher never rips itself, so a rip can't block polling.
+- **Startup:** if the drive is already at `4` when the watcher starts (disc inserted while the Pi was off, or after a service restart), trigger anyway; `dispatch` skips discs already ripped (fingerprint check, section 7/known discs).
+- **Missing or unresponsive drive:** device absent, open fails, or the ioctl errors or times out for more than about 30 s → state `drive_missing` / `drive_unresponsive`, shown in the UI as "Drive not responding: power-cycle it". Keep polling; recover automatically when it answers again. (A wedged USB bridge needs the drive's own power cycled; software can't clear it.)
+- **Busy:** a new disc while a rip runs is visible immediately; queue or reject per section 11.
+- Writes drive state and the time of the last successful poll into the state file (section 4/5), so the web page shows tray open / reading / ready and a stale timestamp exposes a dead watcher.
+- USB autosuspend must stay off for the drive (`power/control` = `on`, which is the case now); check this in `01-base.sh`, or add a udev rule only to pin it.
+
+### 6.2 Dispatch
+
+- `dispatch` reads the disc itself and does not trust udev properties: before anything else run `bin/dvd-reset-auth` (stuck CSS AGIDs make MakeMKV fail with "Failed to open disc"), then classify with `cdrom_id` / `blkid -p` (or `udevadm trigger --action=change` + `udevadm settle` first if udev properties are wanted). Candidate fields: `ID_CDROM_MEDIA_TRACK_COUNT_AUDIO` (audio CD), `ID_CDROM_MEDIA_DVD`, `ID_CDROM_MEDIA_BD`, `ID_FS_LABEL`.
+- Handle slow spin-up: retry reading media state for a short period before declaring "no readable disc".
 - Unknown or unreadable disc: record an error in state and eject (configurable).
+- Allow long scans: discs with corrupt-IFO protection (e.g. Mirrormask) take 9-14 min to scan before ripping starts.
 
 ## 7. Rip pipelines
 
@@ -254,7 +266,7 @@ Auth and exposure:
 
 1. Base OS: confirm USB boot, SSH, hostname, `get_throttled` clean under load, Docker, Samba, directory layout.
 2. MakeMKV arm64 install and a manual rip of one DVD by hand to prove the drive and key work.
-3. `dispatch` script, udev rule and systemd unit. Prove detection, classification and eject with logging only.
+3. Watcher service, `dispatch` script and systemd units. Prove detection (including swaps, startup with a disc in, and drive unplug/replug), classification and eject with logging only.
 4. State file writer and lock, used by all scripts.
 5. Video ripper: info scan, film path (tidy label, junk detection, rip, move), progress parsing.
 6. Season-disc classification, TV plan prompt, numbering, continuation, optional TVmaze names.
