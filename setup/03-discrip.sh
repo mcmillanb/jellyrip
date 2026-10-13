@@ -18,6 +18,7 @@ if [ -e "$DEST/discrip.toml" ]; then
 else
     cp "$REPO/config/discrip.toml" "$DEST/discrip.toml"
 fi
+cp "$REPO/config/abcde.conf" "$DEST/abcde.conf"  # not user config: always updated
 chown -R "$OWNER:$OWNER" "$DEST" /var/lib/discrip
 chmod 600 "$DEST/discrip.toml"  # may hold the Jellyfin API key
 

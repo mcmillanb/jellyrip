@@ -40,9 +40,13 @@ DEFAULTS = {
     "state": {
         "history_max": 50,
     },
+    "audio": {
+        "abcde_conf": "/opt/discrip/abcde.conf",
+        "rip_timeout": 3600,
+    },
     "notify": {
         "jellyfin_popup": True,    # pop up prompts and failures in open Jellyfin apps
-        "popup_seconds": 30,
+        "popup_seconds": 0,        # 0: a dialog that stays until OK; >0: a brief toast
     },
     "jellyfin": {
         "url": "http://localhost:8096",

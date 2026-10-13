@@ -29,9 +29,13 @@ min_free_gb = 25         # refuse to rip below this much free space in [paths] m
 url = "http://localhost:8096"
 api_key = ""               # Dashboard -> API Keys; empty disables refreshes
 
+[audio]
+abcde_conf = "/opt/discrip/abcde.conf"  # installed from config/abcde.conf
+rip_timeout = 3600
+
 [notify]
 jellyfin_popup = true      # pop up prompts and failures in open Jellyfin apps (web, phone)
-popup_seconds = 30
+popup_seconds = 0          # 0 = dialog that stays until OK; >0 = brief toast (Jellyfin ignores the length)
 
 [state]
 history_max = 50         # jobs kept in state.json history

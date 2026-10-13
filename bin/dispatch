@@ -4,7 +4,7 @@
 Started by discrip-watcher via discrip-rip.service. Reads the disc itself rather
 than trusting udev properties: dvd-reset-auth, then cdrom_id and blkid -p.
 Holds the rip lock and records the job in state.json. Video DVDs go to
-lib/video.py; audio CDs are not handled yet.
+lib/video.py, audio CDs to lib/audio.py.
 """
 import logging
 import os
@@ -16,6 +16,7 @@ from pathlib import Path
 
 BIN = Path(__file__).resolve().parent
 sys.path.insert(0, str(BIN.parent / "lib"))
+import audio  # noqa: E402
 import discrip  # noqa: E402
 import library  # noqa: E402
 import video  # noqa: E402
@@ -90,6 +91,8 @@ def notify_outcome(cfg, job_id, result, error):
     item = next((p for p in state["pending"] if p["id"] == job_id), None)
     if result == "error":
         library.notify(cfg, f"Rip failed: {title}: {error}")
+    elif result == "ok" and error:  # done, but flagged (e.g. CD without a match)
+        library.notify(cfg, f"{title}: {error}")
     elif item:
         why = ""
         if item.get("waiting_for"):
@@ -159,9 +162,14 @@ def rip(cfg, dev, job_id):
                 cfg, dev, job_id, label, fs.get("UUID"), force=take_rerip_flag(cfg))
         except video.RipError as e:
             result, error = "error", str(e)
-    else:
-        log.info("would rip: %s (%s ripper not built yet)", media, job_type)
-        result, error = "skipped", f"{job_type} ripper not built yet"
+    elif media == "audio":
+        # Audio tracks come first on enhanced CDs (data session last).
+        tracks = int(cd.get("ID_CDROM_MEDIA_TRACK_COUNT_AUDIO", 0))
+        try:
+            result, error, output, eject = audio.rip_cd(cfg, dev, job_id, tracks,
+                                                         force=take_rerip_flag(cfg))
+        except audio.RipError as e:
+            result, error = "error", str(e)
 
     if eject and cfg["dispatch"]["eject_when_done"]:
         discrip.update_job(cfg, stage="ejecting")

@@ -418,15 +418,20 @@ def answer_season(cfg, pending_id, show=None, season=None, first_episode=None, y
 
 def notify(cfg, text):
     """Pop text up in every open Jellyfin app (web, iOS, ...). Jellyfin keeps no
-    inbox, so only people using it right now see it. Best effort."""
+    inbox, so only people using it right now see it. Best effort.
+    [notify] popup_seconds = 0 (default) gives a dialog that stays until dismissed."""
     jf = cfg["jellyfin"]
     if not (jf["api_key"] and cfg["notify"]["jellyfin_popup"]):
         return
     headers = {"Authorization": f'MediaBrowser Token="{jf["api_key"]}"',
                "Content-Type": "application/json"}
     base = jf["url"].rstrip("/")
-    body = json.dumps({"Header": "discrip", "Text": text,
-                       "TimeoutMs": cfg["notify"]["popup_seconds"] * 1000}).encode()
+    message = {"Header": "discrip", "Text": text}
+    if cfg["notify"]["popup_seconds"] > 0:
+        # Jellyfin's apps show a timed message as a brief toast (a few seconds,
+        # whatever the timeout); without one it is a dialog that stays until OK.
+        message["TimeoutMs"] = cfg["notify"]["popup_seconds"] * 1000
+    body = json.dumps(message).encode()
     try:
         with urllib.request.urlopen(urllib.request.Request(base + "/Sessions", headers=headers),
                                     timeout=10) as r:

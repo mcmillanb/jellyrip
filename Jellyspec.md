@@ -139,6 +139,14 @@ All thresholds live in config. When unsure, ask the user rather than guess.
 - Progress: parse abcde/cdparanoia output as best as practical (track N of M is sufficient).
 - Eject on completion (configurable).
 
+Implementation (build step 8, `lib/audio.py`, `config/abcde.conf`):
+
+- `abcde -N -c /opt/discrip/abcde.conf -d <dev> 1-<audio tracks>` into `_work/<job-id>`; only the audio tracks are passed, so an enhanced CD's trailing data track is never read. FLAC `--best`, cdparanoia in its default (paranoid) mode, two processes (read the next track while encoding). Names keep spaces; only `/`, `:*?"<>|` and control characters are replaced.
+- The MusicBrainz disc id (`abcde-musicbrainz-tool --command id`) is the CD's fingerprint (`mbdiscid:<id>`): an already-ripped CD is skipped and ejected like a DVD. With several matching releases abcde takes the first (they normally share the track list).
+- Progress comes from abcde's `status` file (`readtrack-NN`, `encodetrack-NN`).
+- The finished `<Artist>/<Album>` folder is renamed into `Music/`. If that album folder exists from another CD (e.g. disc 2 of a set), it becomes `<Album> (2)`; the same CD re-ripped replaces its own folder. No match (`Unknown Artist`): moved to `_unknown_music/<job-id>/` and flagged.
+- Measured: KT Tunstall, Drastic Fantastic (11 tracks, 39:24) in 14 min, about 2x read speed in paranoia mode; 266 MB FLAC.
+
 ## 8. State and locking
 
 ### 8.1 Locking
