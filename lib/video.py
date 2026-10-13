@@ -160,20 +160,26 @@ def park(cfg, workdir, job_id):
     return inbox
 
 
-def file_film(cfg, job_id, label, disc_name, title, mkv, workdir):
+def file_film(cfg, job_id, label, disc_name, title, mkv, workdir, fp, known):
     vc = cfg["video"]
     name = naming.sanitise(naming.tidy_label(disc_name, vc["label_noise"]))
     dest = None
-    if naming.is_junk(disc_name, name, vc["junk_labels"]):
+    if known and known.get("kind") == "film":
+        name = known["name"]
+        log.info("known disc: named %r before", name)
+        dest = library.place_film(cfg, mkv, name, fp)
+    elif naming.is_junk(disc_name, name, vc["junk_labels"]):
         log.info("label %r is junk; parking in _inbox for a name", disc_name)
     else:
-        dest = library.place_film(cfg, mkv, name)
-        if dest is None:
-            log.warning("%s already exists twice; parking in _inbox", name)
+        dest = library.place_film(cfg, mkv, name, fp)
+    if dest is None and name:
+        log.warning("Movies/%s already has two copies from other discs; parking in _inbox",
+                    name)
     discrip.update_job(cfg, title=name or disc_name)
     if dest:
         workdir.rmdir()
         log.info("moved to %s", dest)
+        library.record_rip(cfg, fp, label, "film", [dest], job_id)
         library.jellyfin_refresh(cfg)
         return str(dest)
 
@@ -182,7 +188,7 @@ def file_film(cfg, job_id, label, disc_name, title, mkv, workdir):
         "id": job_id,
         "prompt": "name_film",
         "disc_label": label,
-        "fingerprint": None,  # build step 7
+        "fingerprint": fp,
         "suggested": {"name": name},
         "titles": [{"index": title["index"], "duration_s": title["duration_s"],
                     "file": str(inbox / mkv.name)}],
@@ -192,18 +198,24 @@ def file_film(cfg, job_id, label, disc_name, title, mkv, workdir):
     return str(inbox)
 
 
-def file_tv(cfg, job_id, label, disc_name, chosen, mkvs, workdir):
-    """Continue a known season automatically, or park with a tv_plan prompt."""
+def file_tv(cfg, job_id, label, disc_name, chosen, mkvs, workdir, fp, known):
+    """File a known disc or continue a known season automatically, else park with
+    a tv_plan prompt."""
     show, season, disc = naming.parse_tv_label(disc_name, cfg["video"]["label_noise"])
     show = naming.sanitise(show)
     season = season or 1
-    discrip.update_job(cfg, title=f"{show} season {season}")
     cont = library.continuation(cfg, show, season) if show else None
     # Spec 8.4: a following disc (same show and season, different disc number)
     # continues the numbering without asking. Anything else asks.
     auto = bool(cont) and disc is not None and disc != cont.get("last_disc")
     first = cont["next_episode"] if cont else 1
     year = cont.get("year") if cont else None
+    if known and known.get("kind") == "tv":
+        # This very disc was confirmed before: same plan, no question.
+        show, season = known["show"], known["season"]
+        first, year, auto = known["first_episode"], known.get("year"), True
+        log.info("known disc: %s season %d from episode %d", show, season, first)
+    discrip.update_job(cfg, title=f"{show} season {season}")
 
     inbox = park(cfg, workdir, job_id)
     titles = [{"index": t["index"], "duration_s": t["duration_s"],
@@ -215,15 +227,14 @@ def file_tv(cfg, job_id, label, disc_name, chosen, mkvs, workdir):
         "id": job_id,
         "prompt": "tv_plan",
         "disc_label": label,
-        "fingerprint": None,  # build step 7
+        "fingerprint": fp,
         "suggested": {"show": show, "year": year, "season": season, "first_episode": first,
                       "disc": disc, "continues": bool(cont)},
         "titles": titles,
         "inbox_path": str(inbox),
     })
     if auto:
-        log.info("continuing %s season %d from episode %d (disc %s after disc %s)",
-                 show, season, first, disc, cont["last_disc"])
+        log.info("filing %s season %d from episode %d without asking", show, season, first)
         try:
             dests = library.apply_tv_plan(cfg, job_id, show, season, first, year, label, disc)
             return str(dests[0].parent)
@@ -234,8 +245,10 @@ def file_tv(cfg, job_id, label, disc_name, chosen, mkvs, workdir):
     return str(inbox)
 
 
-def rip_dvd(cfg, dev, job_id, label):
-    """Rip a video DVD. Returns (result, error, output, eject)."""
+def rip_dvd(cfg, dev, job_id, label, uuid=None, force=False):
+    """Rip a video DVD. Returns (result, error, output, eject).
+
+    force: rip even if this disc (fingerprint) is already in the library."""
     vc = cfg["video"]
     media = Path(cfg["paths"]["media"])
     workdir = media / "_work" / job_id
@@ -254,6 +267,21 @@ def rip_dvd(cfg, dev, job_id, label):
              disc_name)
     discrip.update_job(cfg, kind=kind, title=disc_name)
 
+    fp = library.fingerprint(label, uuid, [t["duration_s"] for t in titles])
+    log.info("fingerprint %s", fp)
+    if not force:
+        done = library.already_ripped(cfg, fp)
+        if done:
+            log.info("already ripped (job %s): %s", done["job_id"], done["outputs"][0])
+            return "skipped", "already in the library", done["outputs"][0], True
+        waiting = next((p for p in discrip.read_state(cfg)["pending"]
+                        if p.get("fingerprint") == fp), None)
+        if waiting:
+            log.info("already ripped, waiting for an answer (%s)", waiting["id"])
+            return ("skipped", f"already ripped, waiting for an answer ({waiting['id']})",
+                    waiting["inbox_path"], True)
+    known = library.known(cfg, fp)
+
     if kind == "none":
         return "error", f"no title longer than {vc['minlength']} s", None, True
     if kind == "ambiguous":
@@ -262,7 +290,7 @@ def rip_dvd(cfg, dev, job_id, label):
             "id": job_id,
             "prompt": "choose_titles",
             "disc_label": label,
-            "fingerprint": None,
+            "fingerprint": fp,
             "suggested": {},
             "titles": [{"index": t["index"], "duration_s": t["duration_s"],
                         "size": t["size"], "chapters": t["chapters"]}
@@ -280,9 +308,10 @@ def rip_dvd(cfg, dev, job_id, label):
                 for i, t in enumerate(chosen)]
         discrip.update_job(cfg, stage="moving", percent=None, detail=None)
         if kind == "film":
-            output = file_film(cfg, job_id, label, disc_name, chosen[0], mkvs[0], workdir)
+            output = file_film(cfg, job_id, label, disc_name, chosen[0], mkvs[0], workdir,
+                               fp, known)
         else:
-            output = file_tv(cfg, job_id, label, disc_name, chosen, mkvs, workdir)
+            output = file_tv(cfg, job_id, label, disc_name, chosen, mkvs, workdir, fp, known)
         return "ok", None, output, True
     finally:
         # Anything left in _work/<job> is a failed or cancelled rip.

@@ -81,6 +81,19 @@ def on_sigterm(signum, frame):
     raise Cancelled()
 
 
+def take_rerip_flag(cfg):
+    """True (once) if run_dir/rerip exists: rip even if the disc is already in the
+    library. Created by the web app's "rip again" (or by hand: touch it, then
+    systemctl start discrip-rip)."""
+    flag = Path(cfg["paths"]["run_dir"]) / "rerip"
+    try:
+        flag.unlink()
+    except FileNotFoundError:
+        return False
+    log.info("rerip flag set: ripping even if already in the library")
+    return True
+
+
 def rip(cfg, dev, job_id):
     """Detect and rip the disc. Returns (result, error, output)."""
     if not wait_ready(dev, cfg["drive"]["ready_timeout"]):
@@ -115,7 +128,8 @@ def rip(cfg, dev, job_id):
         result = "error"
     elif media == "dvd":
         try:
-            result, error, output, eject = video.rip_dvd(cfg, dev, job_id, label)
+            result, error, output, eject = video.rip_dvd(
+                cfg, dev, job_id, label, fs.get("UUID"), force=take_rerip_flag(cfg))
         except video.RipError as e:
             result, error = "error", str(e)
     else:

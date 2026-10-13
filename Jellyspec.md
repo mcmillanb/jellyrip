@@ -213,6 +213,8 @@ Goal: unattended when the disc gives a usable name, and a single short question 
 
 **Disc fingerprint.** A stable id for "this specific disc", e.g. a sha1 of `ID_FS_LABEL`, `ID_FS_UUID` and the sorted title durations. Used to remember corrections and to tell two different discs of the same film apart. Corrections are stored in `/var/lib/discrip/known_discs.json`; the output path of every rip is recorded against its fingerprint in `/var/lib/discrip/library.json`.
 
+Implementation (build step 7, `lib/library.py`): `fingerprint` = `sha1:` of label, UUID (from `blkid`) and the sorted durations of the titles MakeMKV lists, so changing `[video] minlength` changes fingerprints. `library.json` records each disc's output files; `known_discs.json` holds the answers given for it (film name, or TV show/season/first episode). After the scan, a disc whose files are all still in the library is **skipped and ejected** ("already in the library"), as is a disc already waiting in `_inbox` for an answer. To rip it again anyway, create `/run/discrip/rerip` before starting the rip (the web app's "rip again" will do this); the re-rip replaces only the files that disc wrote. A known disc is filed with its remembered answer and no question. `discrip-pending known` / `forget <fingerprint>` list and drop remembered answers.
+
 **Films**
 
 - Take the disc name (MakeMKV `CINFO` name, falling back to `ID_FS_LABEL`) and tidy it: underscores to spaces, strip trailing disc/format noise (`DISC1`, `D1`, `WS`, `PAL`, `NTSC`, `BLURAY`), title-case. Example: `BLADE_RUNNER_2049` becomes `Blade Runner 2049`.
