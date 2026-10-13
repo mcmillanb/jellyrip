@@ -37,6 +37,7 @@ max_candidates = 12        # more titles than this: ask instead of guessing (dec
 duplicate_tolerance = 0.02 # more than one title this close to the longest: ask
 scan_timeout = 1800        # protected discs take up to ~15 min to scan
 rip_timeout = 14400
+tv_lookup = true           # episode names from TVmaze (api.tvmaze.com; names only, never order)
 # Trailing words/phrases stripped from disc labels, and labels that are no name at all.
 label_noise = ["WS", "FS", "PAL", "NTSC", "DVD", "BLURAY", "BD", "R1", "R2", "UK", "SE",
                "SPECIAL EDITION", "COLLECTORS EDITION", "FAM FUN EDITION",

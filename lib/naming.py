@@ -62,3 +62,34 @@ def sanitise(name):
     name = re.sub(r"[/\x00-\x1f\x7f]", " ", name)
     name = re.sub(r"\s+", " ", name).strip().rstrip(".").strip()
     return name
+
+
+def parse_tv_label(label, noise):
+    """FATHER_TED_S1_D2 -> ('Father Ted', 1, 2). Season and disc are None if absent.
+
+    Season/disc tokens are taken from the end of the label in any order:
+    S1, S01, SEASON_1, SERIES1, S1D2, D2, DISC_2, DISK2.
+    """
+    words = re.sub(r"[_.]+", " ", label or "").split()
+    season = disc = None
+    while words:
+        w = words[-1]
+        two = len(words) > 1 and w.isdigit()
+        if m := re.fullmatch(r"S0*(\d{1,2})D0*(\d{1,2})", w, re.I):
+            season, disc = int(m[1]), int(m[2])
+            words.pop()
+        elif m := re.fullmatch(r"(?:DIS[CK]|D)0*(\d{1,2})", w, re.I):
+            disc = int(m[1])
+            words.pop()
+        elif two and re.fullmatch(r"DIS[CK]|D", words[-2], re.I):
+            disc = int(w)
+            del words[-2:]
+        elif m := re.fullmatch(r"S(?:EASON|ERIES)?0*(\d{1,2})", w, re.I):
+            season = int(m[1])
+            words.pop()
+        elif two and re.fullmatch(r"S|SEASON|SERIES", words[-2], re.I):
+            season = int(w)
+            del words[-2:]
+        else:
+            break
+    return tidy_label(" ".join(words), noise), season, disc

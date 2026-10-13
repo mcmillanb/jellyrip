@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+"""List and answer pending prompts until the web app exists (spec 8.2, 9).
+
+  discrip-pending                         list prompts
+  discrip-pending film <id> "<Name>"      file a parked film as Movies/<Name>/<Name>.mkv
+  discrip-pending tv <id> [--show S] [--season N] [--first-episode E] [--year Y]
+                                          file a parked season disc (defaults: suggestion)
+  discrip-pending discard <id>            delete a parked rip and its prompt
+"""
+import argparse
+import logging
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+import discrip  # noqa: E402
+import library  # noqa: E402
+
+
+def hms(s):
+    return f"{s // 3600}:{s // 60 % 60:02d}:{s % 60:02d}"
+
+
+def show_list(cfg):
+    pending = discrip.read_state(cfg)["pending"]
+    if not pending:
+        print("No pending prompts.")
+    for p in pending:
+        print(f"{p['id']}  {p['prompt']}  disc {p['disc_label']!r}")
+        sug = {k: v for k, v in p["suggested"].items() if v is not None}
+        if sug:
+            print("  suggested:", ", ".join(f"{k}={v}" for k, v in sug.items()))
+        for t in p["titles"]:
+            extra = f"  -> {t['proposed']}" if t.get("proposed") else ""
+            print(f"  title {t['index']:2d}  {hms(t['duration_s'])}{extra}")
+        print()
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="cmd")
+    f = sub.add_parser("film")
+    f.add_argument("id")
+    f.add_argument("name")
+    t = sub.add_parser("tv")
+    t.add_argument("id")
+    t.add_argument("--show")
+    t.add_argument("--season", type=int)
+    t.add_argument("--first-episode", type=int)
+    t.add_argument("--year", type=int)
+    d = sub.add_parser("discard")
+    d.add_argument("id")
+    args = ap.parse_args()
+
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    cfg = discrip.load_config()
+    try:
+        if args.cmd == "film":
+            print(library.answer_name_film(cfg, args.id, args.name))
+        elif args.cmd == "tv":
+            item = discrip.get_pending(cfg, args.id)
+            if not item:
+                raise library.PlanError(f"no pending item {args.id}")
+            sug = item["suggested"]
+            show = args.show or sug.get("show")
+            if not show:
+                raise library.PlanError("no show name suggested: pass --show")
+            library.apply_tv_plan(
+                cfg, args.id, show,
+                args.season or sug.get("season") or 1,
+                args.first_episode or sug.get("first_episode") or 1,
+                args.year or sug.get("year"),
+                disc=sug.get("disc"))
+        elif args.cmd == "discard":
+            library.discard(cfg, args.id)
+        else:
+            show_list(cfg)
+    except library.PlanError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

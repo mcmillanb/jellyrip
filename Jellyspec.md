@@ -126,7 +126,7 @@ All thresholds live in config. When unsure, ask the user rather than guess.
 
 - **Film**: the longest title is >= 60 min and there is no cluster of similar-length titles. Rip that title only. Extras and trailers are skipped (setting to include them).
 - **Season disc**: 3 or more titles with durations in a band of about 18-70 min and within about 20% of the group median. Rip all of them, in disc title order.
-- **Long title next to a season cluster**: if its duration is the sum of the cluster (within 5%) it is a "play all" and is skipped (season); otherwise it could be a film with similar-length extras, so ask (ambiguous).
+- **Long title next to a season cluster**: if the durations of the cluster, or of the cluster minus up to 2 titles, add up to it (within 2%), it is a "play all": those titles are the episodes and the rest are episode-length extras (Father Ted S1: 7 titles of 22-25 min, a 2:25:17 play-all = titles 1-6 exactly). Otherwise it could be a film with similar-length extras, so ask (ambiguous).
 - **Twins**: more than one title within 2% of the longest (decoys, alternate cuts, language versions): ask.
 - **Ambiguous**: anything else, or more than 12 candidate titles (some Blu-rays carry dozens of near-identical decoy playlists). Do not rip automatically. Create a pending `choose_titles` prompt listing the titles so the user can pick, and leave the disc in the drive.
 - A whole season welded into one very long title is ripped as one file and flagged in history.
@@ -235,6 +235,8 @@ Goal: unattended when the disc gives a usable name, and a single short question 
 - **Episode titles (optional, config `tv_lookup = true`):** look up names from TVmaze (free, no account, `https://api.tvmaze.com`), taking names only and never the order. If offline or no match, name files `Show - S01E01.mkv`.
 - Double-length episodes, or episodes carried twice (with and without a "next time" trailer), are not handled specially in v1. They show up in the plan so the user can spot them; extra files can be removed over Samba.
 
+**Implementation (build step 6):** `lib/library.py` holds the moves and prompt answers (shared by the ripper, `bin/discrip-pending` and the web app). Season discs are ripped title by title (each `mkv` run re-scans the disc), parked in `_inbox/<job-id>/title_NN.mkv`, and get a `tv_plan` prompt whose `suggested` holds `show`, `season` and `disc` parsed from the label (`FATHER_TED_S1_D2` -> Father Ted, 1, 2; season defaults to 1), `first_episode` and `year` from the continuation, and each title's `proposed` file name. Continuations live in `/var/lib/discrip/tv_continuation.json`, keyed by show and season. A disc continues automatically only if its label carries a disc number different from the last disc of that season; otherwise it asks, with the continuation as the default. Ambiguous discs get a `choose_titles` prompt listing the titles and stay in the drive (answering it arrives with the web app). Until the web app exists, answer prompts with `bin/discrip-pending`.
+
 **Sanitising:** strip `/`, control characters and trailing dots from all names.
 
 ## 9. Web app
@@ -279,7 +281,7 @@ Auth and exposure:
 2. If a disc is inserted while busy: queue, or reject with a message? **Decided 2026-10-13:** reject with a message (8.1).
 3. Auto-start on insert, or require a tap on `/api/start`? **Decided 2026-10-13:** auto-start, switchable with `[dispatch] auto_start`.
 4. Jellyfin refresh: API call after move, or rely on its own scanning?
-5. TVmaze lookup on by default?
+5. TVmaze lookup on by default? Defaulted to on in step 6 (`[video] tv_lookup`); confirm with the user.
 6. Include DVD extras by default? (Proposed: no.)
 7. Hostname, web port, Samba username.
 8. Whether to keep a copy of the MakeMKV log with each rip.

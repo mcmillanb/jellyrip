@@ -51,6 +51,7 @@ DEFAULTS = {
         "duplicate_tolerance": 0.02,  # >1 title this close to the longest: ask
         "scan_timeout": 1800,
         "rip_timeout": 14400,
+        "tv_lookup": True,         # episode names from TVmaze (names only, never order)
         "label_noise": ["WS", "FS", "PAL", "NTSC", "DVD", "BLURAY", "BD", "R1", "R2",
                         "UK", "SE", "SPECIAL EDITION", "COLLECTORS EDITION",
                         "FAM FUN EDITION", "FAMILY FUN EDITION", "WIDESCREEN"],
@@ -148,24 +149,37 @@ def empty_state():
 
 
 @contextlib.contextmanager
-def state_update(cfg):
-    """Read-modify-write state.json under a lock; yields the dict to modify.
+def json_update(path, default):
+    """Read-modify-write a JSON file under a lock; yields the data to modify.
 
     Written atomically (temp file + rename), so readers never see a partial file.
     """
-    state_dir = Path(cfg["paths"]["state_dir"])
-    path = state_dir / "state.json"
-    with open(state_dir / "state.lock", "a") as lock:
+    path = Path(path)
+    with open(path.with_name(f".{path.name}.lock"), "a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
-            state = json.loads(path.read_text())
+            data = json.loads(path.read_text())
         except (FileNotFoundError, json.JSONDecodeError):
-            state = empty_state()
+            data = default()
+        yield data
+        tmp = path.with_name(f".{path.name}.{os.getpid()}")
+        tmp.write_text(json.dumps(data, indent=2) + "\n")
+        os.replace(tmp, path)
+
+
+@contextlib.contextmanager
+def state_update(cfg):
+    """Read-modify-write state.json; yields the state dict to modify."""
+    with json_update(Path(cfg["paths"]["state_dir"]) / "state.json", empty_state) as state:
         yield state
         state["updated_at"] = now_iso()
-        tmp = path.with_name(f".state.json.{os.getpid()}")
-        tmp.write_text(json.dumps(state, indent=2) + "\n")
-        os.replace(tmp, path)
+
+
+def read_state(cfg):
+    try:
+        return json.loads((Path(cfg["paths"]["state_dir"]) / "state.json").read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return empty_state()
 
 
 # ---------------------------------------------------------------- rip lock and jobs
@@ -250,6 +264,19 @@ def add_pending(cfg, item):
     with state_update(cfg) as state:
         state["pending"] = [p for p in state["pending"] if p["id"] != item["id"]]
         state["pending"].append({**item, "created_at": now_iso()})
+
+
+def get_pending(cfg, pending_id):
+    return next((p for p in read_state(cfg)["pending"] if p["id"] == pending_id), None)
+
+
+def resolve_pending(cfg, pending_id, output=None):
+    """Drop a pending item; record where its files went in the job's history entry."""
+    with state_update(cfg) as state:
+        state["pending"] = [p for p in state["pending"] if p["id"] != pending_id]
+        for h in state["history"]:
+            if h["id"] == pending_id:
+                h["output"] = output
 
 
 def check_free_space(cfg, need_bytes=0):
