@@ -33,6 +33,16 @@ api_key = ""               # Dashboard -> API Keys; empty disables refreshes
 abcde_conf = "/opt/discrip/abcde.conf"  # installed from config/abcde.conf
 rip_timeout = 3600
 
+[encode]
+# Overnight re-encoding of DVD rips (MPEG-2) to save space and avoid live
+# transcoding in browsers. These are defaults: the web app's settings win.
+enabled = true
+window_start = "01:00"     # HH:MM; may cross midnight (e.g. 23:00 to 06:00)
+window_end = "07:00"
+codec = "h264"             # "h264" plays everywhere; "h265" is ~1/3 smaller, ~2.5x slower
+keep_originals = false     # true keeps each MPEG-2 file in /srv/media/_originals
+max_temp = 75              # pause above this CPU temperature
+
 [web]
 port = 8080
 token = ""                 # shared secret for the web app's buttons; 03-discrip.sh fills it in

@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+"""Re-encode DVD rips overnight, one file at a time (lib/encode.py).
+
+Every 15 s: work out whether encoding may run (switch, time window, no rip, no
+Jellyfin playback, CPU not hot); pause or resume the running ffmpeg to match,
+or start the next file. Publishes its status as "encode" in state.json.
+"""
+import logging
+import shutil
+import signal
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+import discrip  # noqa: E402
+import encode  # noqa: E402
+import library  # noqa: E402
+
+log = logging.getLogger("encoder")
+TICK = 15
+INDEX_EVERY = 600
+
+
+class Stop(Exception):
+    pass
+
+
+def on_term(signum, frame):
+    raise Stop()
+
+
+def publish(cfg, status):
+    with discrip.state_update(cfg) as state:
+        state["encode"] = status
+
+
+def main():
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    cfg = discrip.load_config()
+    media = Path(cfg["paths"]["media"])
+    # An encode cut short by a restart or reboot can't be resumed: start it again.
+    for old in (media / "_work").glob("encode-*"):
+        shutil.rmtree(old)
+        log.info("removed unfinished encode %s", old)
+    signal.signal(signal.SIGTERM, on_term)
+
+    job = None
+    hot = False
+    active_s = 0.0       # seconds the current job has actually run (not paused)
+    last_tick = time.monotonic()
+    pending_count, indexed_at = 0, 0.0
+    last_result = None
+    try:
+        while True:
+            now = time.monotonic()
+            if job and not job.paused:
+                active_s += now - last_tick
+            last_tick = now
+
+            s = encode.settings(cfg)
+            reason = encode.pause_reason(cfg, s, hot)
+            hot = bool(reason and reason.startswith("CPU"))
+
+            if job and job.proc.poll() is not None:
+                rel = str(job.src.relative_to(media))
+                ok, msg = job.finish(s["keep_originals"])
+                if ok:
+                    log.info("encoded %s: %s", rel, msg)
+                    library.jellyfin_refresh(cfg)
+                else:
+                    log.error("encode of %s failed: %s (original kept)", rel, msg)
+                    encode.mark(cfg, str(job.src), status="failed", error=msg)
+                last_result = {"file": rel, "ok": ok, "message": msg, "at": discrip.now_iso()}
+                job, indexed_at = None, 0.0
+            elif job and reason == "turned off":
+                log.info("encoding turned off: stopping %s", job.src.name)
+                job.kill()
+                job = None
+            elif job and reason:
+                if not job.paused:
+                    log.info("pausing %s: %s", job.src.name, reason)
+                job.pause()
+            elif job and job.paused:
+                log.info("resuming %s", job.src.name)
+                job.resume()
+
+            if now - indexed_at > INDEX_EVERY:
+                pending_count = len(encode.queue(cfg))
+                indexed_at = now
+            if not job and not reason and pending_count:
+                todo = encode.queue(cfg)
+                pending_count = len(todo)
+                if todo:
+                    job = encode.Job(cfg, todo[0], s["codec"])
+                    active_s = 0.0
+                    try:
+                        job.start()
+                    except Exception as e:  # noqa: BLE001 - one bad file must not stop the rest
+                        log.exception("could not start encoding %s", todo[0])
+                        encode.mark(cfg, todo[0], status="failed", error=str(e))
+                        job.cleanup()
+                        job, indexed_at = None, 0.0
+
+            status = {"enabled": s["enabled"], "window": f"{s['window_start']}-{s['window_end']}",
+                      "codec": s["codec"], "queue": pending_count, "last": last_result,
+                      "state": "off" if not s["enabled"] else "idle", "reason": reason}
+            if job:
+                eta = None
+                if job.done_s > 30 and active_s > 60:
+                    eta = round((job.duration - job.done_s) / (job.done_s / active_s) / 3600, 1)
+                status.update(state="paused" if job.paused else "encoding",
+                              file=str(job.src.relative_to(media)), percent=job.percent,
+                              speed=round(job.done_s / active_s, 2) if active_s > 60 else None,
+                              eta_hours=eta)
+            publish(cfg, status)
+            time.sleep(TICK)
+    except (Stop, KeyboardInterrupt):
+        if job:
+            log.info("stopping: abandoning %s (restarts from the beginning next time)",
+                     job.src.name)
+            job.kill()
+        publish(cfg, {"state": "stopped"})
+
+
+if __name__ == "__main__":
+    main()

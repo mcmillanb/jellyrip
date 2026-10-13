@@ -15,6 +15,7 @@ apt-get install -y --no-install-recommends \
     abcde cd-discid cdparanoia flac \
     libmusicbrainz-discid-perl libwebservice-musicbrainz-perl \
     python3-flask \
+    ffmpeg \
     samba \
     docker.io docker-cli
 

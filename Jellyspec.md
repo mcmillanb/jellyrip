@@ -15,7 +15,7 @@ Insert a disc into a USB drive, walk away, and later find it in Jellyfin with se
 
 ## 2. Non-goals (v1)
 
-- No HandBrake or other re-encoding (may be added later as a separate stage).
+- No re-encoding during the rip. (Added 2026-10-13 as a separate overnight stage: see 7.3.)
 - No CYD or other hardware display (the status JSON is designed so one could be added later).
 - No RAID, no multi-drive support, no remote access from outside the LAN.
 - No film metadata lookup: films are named from the disc and Jellyfin does the matching. The only online lookup is optional TV episode names (TVmaze, see 8.4).
@@ -146,6 +146,16 @@ Implementation (build step 8, `lib/audio.py`, `config/abcde.conf`):
 - Progress comes from abcde's `status` file (`readtrack-NN`, `encodetrack-NN`).
 - The finished `<Artist>/<Album>` folder is renamed into `Music/`. If that album folder exists from another CD (e.g. disc 2 of a set), it becomes `<Album> (2)`; the same CD re-ripped replaces its own folder. No match (`Unknown Artist`): moved to `_unknown_music/<job-id>/` and flagged.
 - Measured: KT Tunstall, Drastic Fantastic (11 tracks, 39:24) in 14 min, about 2x read speed in paranoia mode; 266 MB FLAC.
+
+### 7.3 Overnight re-encoding (added 2026-10-13)
+
+DVD rips are MPEG-2, which browsers can't play (Jellyfin then transcodes live on the Pi) and which is large (~2.7 GB per hour). `discrip-encode.service` (`bin/encoder`, `lib/encode.py`) re-encodes library files one at a time:
+
+- **Decided with the user:** H.264 by default (x264 `slow`, CRF 20: plays directly everywhere including browsers; measured 22 fps on DVD video, about 1.8 h per film, ~7x smaller video). H.265 (x265 `fast`, CRF 22, `hvc1` tag) is a setting: ~1/3 smaller again, 8.5 fps, and not playable everywhere. Originals are deleted once the encode is verified (`keep_originals` keeps them in `_originals/`). The time window is set in the web app (default 01:00-07:00, may cross midnight).
+- Queue: `.mkv` files under `Movies/` and `TV/` whose video is MPEG-1/2 (ffprobe results cached in `encode_index.json` by size and mtime), oldest first. A failed file is marked and skipped until it changes.
+- Runs at `Nice=19`, `CPUSchedulingPolicy=idle`, `IOSchedulingClass=idle`. Every 15 s it pauses ffmpeg with SIGSTOP (keeping its progress) and resumes it with SIGCONT, so an encode can span several nights. It pauses when: turned off (then it stops and discards the partial file), outside the window, a disc is ripping, anything plays in Jellyfin (`/Sessions` with `NowPlayingItem`, paused playback included), or the CPU is at `max_temp` (75 C; resumes 5 C lower). A restart or reboot restarts the current file.
+- Each file: all streams copied (`-map 0 -c copy`) except the video; deinterlaced with `bwdif` only if `idet` on 40 s mid-file finds mostly interlaced frames (DVD field-order flags are unreliable: Mirrormask is flagged `tt` but progressive). Output to `_work/encode-*`, then checked against the original (video codec, duration within 2 s, same audio and subtitle stream counts) and renamed over it, so the library path and fingerprint records stay valid; then a Jellyfin refresh.
+- Settings: `[encode]` in `discrip.toml` gives defaults; the web app stores changes in `/var/lib/discrip/encode.json` (`GET`/`POST /api/encode`). Status is published as `encode` in `state.json`.
 
 ## 8. State and locking
 

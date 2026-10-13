@@ -63,7 +63,7 @@ button.danger { color: var(--bad); }
 button.small { min-height: 34px; padding: 0 12px; font-size: 14px; font-weight: 500; }
 button:disabled { opacity: .5; }
 label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
-input[type=text], input[type=number], input[type=password] {
+input[type=text], input[type=number], input[type=password], input[type=time] {
   font: inherit; width: 100%; min-height: 44px; padding: 0 12px; border-radius: 10px;
   border: 1px solid var(--line); background: var(--bg); color: var(--text); }
 .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
@@ -108,6 +108,28 @@ pre { white-space: pre-wrap; word-break: break-all; font-size: 12px; line-height
 
   <h2>History</h2>
   <div class="card" id="history"><div class="empty">Loading…</div></div>
+
+  <h2>Overnight encoding</h2>
+  <div class="card" id="encode">
+    <div class="title" id="enc-title">…</div>
+    <div class="sub" id="enc-sub"></div>
+    <div class="bar" id="enc-bar" hidden><div></div></div>
+    <details id="enc-d" style="margin-top:10px"><summary class="muted">Settings</summary>
+      <label class="check" style="border:none"><input type="checkbox" id="enc-on"> <span>Re-encode DVD rips to save space</span></label>
+      <div class="grid" style="grid-template-columns:1fr 1fr">
+        <div><label for="enc-start">From</label><input type="time" id="enc-start"></div>
+        <div><label for="enc-end">Until</label><input type="time" id="enc-end"></div>
+      </div>
+      <label>Codec</label>
+      <span class="seg">
+        <label><input type="radio" name="enc-codec" value="h264"><span>H.264</span></label>
+        <label><input type="radio" name="enc-codec" value="h265"><span>H.265</span></label>
+      </span>
+      <div class="sub" style="margin-top:6px">H.264 plays on everything (browsers too), about 2 h per film. H.265 is about a third smaller but about 2.5× slower, and some browsers and TVs can't play it.</div>
+      <label class="check" style="border:none"><input type="checkbox" id="enc-keep"> <span>Keep the original MPEG-2 files (in _originals; saves no space)</span></label>
+      <div class="row"><button class="primary" id="enc-save">Save</button></div>
+    </details>
+  </div>
 
   <h2>More</h2>
   <div class="card">
@@ -393,12 +415,55 @@ $("#known-d").ontoggle = async () => {
   }));
 };
 
+// ---------------------------------------------------------------- encoding
+function renderEncode(s) {
+  const e = s.state.encode;
+  const bar = $("#enc-bar");
+  if (!e || e.state === "stopped") {
+    $("#enc-title").textContent = "Encoder not running";
+    $("#enc-sub").textContent = "systemctl status discrip-encode";
+    bar.hidden = true;
+    return;
+  }
+  const codec = e.codec === "h265" ? "H.265" : "H.264";
+  const left = e.queue ? `${e.queue} file${e.queue > 1 ? "s" : ""} to go` : "Nothing to encode";
+  if (e.state === "encoding" || e.state === "paused") {
+    const name = e.file.split("/").pop().replace(/\.mkv$/, "");
+    $("#enc-title").textContent = (e.state === "paused" ? "Paused: " : "Encoding: ") + name;
+    const eta = e.eta_hours != null && e.state === "encoding" ? ` · about ${e.eta_hours} h left` : "";
+    $("#enc-sub").textContent = `${Math.round(e.percent)}% · ${codec}${eta}` +
+      (e.state === "paused" ? ` · ${e.reason}` : "") + ` · ${left}`;
+    bar.hidden = false;
+    bar.querySelector("div").style.width = e.percent + "%";
+  } else {
+    $("#enc-title").textContent = e.state === "off" ? "Off" : left;
+    const when = e.queue && e.reason ? ` · waiting: ${e.reason}` : "";
+    const lastTxt = e.last ? ` · last: ${e.last.file.split("/").pop()} ${e.last.ok ? "✓ " : "✕ "}${e.last.message}` : "";
+    $("#enc-sub").textContent = `${codec} · ${e.window}${when}${lastTxt}`;
+    bar.hidden = true;
+  }
+}
+let encLoaded = false;
+$("#enc-d").ontoggle = async () => {
+  if (!$("#enc-d").open || encLoaded) return;
+  const e = await api("GET", "/api/encode");
+  $("#enc-on").checked = e.enabled; $("#enc-keep").checked = e.keep_originals;
+  $("#enc-start").value = e.window_start; $("#enc-end").value = e.window_end;
+  document.querySelector(`input[name=enc-codec][value=${e.codec}]`).checked = true;
+  encLoaded = true;
+};
+$("#enc-save").onclick = (ev) => act(ev.target, () => api("POST", "/api/encode", {
+  enabled: $("#enc-on").checked, keep_originals: $("#enc-keep").checked,
+  window_start: $("#enc-start").value, window_end: $("#enc-end").value,
+  codec: document.querySelector("input[name=enc-codec]:checked").value,
+}), "Saved: the encoder picks it up within 15 s");
+
 // ---------------------------------------------------------------- loop
 async function poll() {
   try {
     const s = await api("GET", "/api/status");
     last = s;
-    renderChips(s); renderBanners(s); renderNow(s); renderQueue(s);
+    renderChips(s); renderBanners(s); renderNow(s); renderQueue(s); renderEncode(s);
     const jid = s.last_job && s.last_job.id;
     if (jid !== lastJobId) { lastJobId = jid; refreshHistory(); }
   } catch (e) {

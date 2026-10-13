@@ -36,13 +36,13 @@ echo "d /run/discrip 0755 $OWNER $OWNER -" > /etc/tmpfiles.d/discrip.conf
 systemd-tmpfiles --create /etc/tmpfiles.d/discrip.conf
 
 echo "== systemd units and polkit rule"
-for unit in discrip-watcher.service discrip-rip.service discrip-web.service; do
+for unit in discrip-watcher.service discrip-rip.service discrip-web.service discrip-encode.service; do
     sed "s/@OWNER@/$OWNER/g" "$REPO/systemd/$unit" > "/etc/systemd/system/$unit"
 done
 sed "s/@OWNER@/$OWNER/g" "$REPO/systemd/50-discrip.rules" > /etc/polkit-1/rules.d/50-discrip.rules
 systemctl daemon-reload
-systemctl enable discrip-watcher.service discrip-web.service
-systemctl restart discrip-watcher.service discrip-web.service
+systemctl enable discrip-watcher.service discrip-web.service discrip-encode.service
+systemctl restart discrip-watcher.service discrip-web.service discrip-encode.service
 
 token=$(sed -n 's/^token = "\(.*\)"/\1/p' "$DEST/discrip.toml" | head -1)
 echo

@@ -18,6 +18,7 @@ from flask import Flask, abort, jsonify, request, send_from_directory
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "lib"))
 import discrip  # noqa: E402
+import encode  # noqa: E402
 import library  # noqa: E402
 
 WEB = ROOT / "web"
@@ -163,6 +164,12 @@ def preview(pid):
         abort(400, str(e))
 
 
+@app.get("/api/encode")
+def encode_settings():
+    """Overnight encoding settings (status is in /api/status as state.encode)."""
+    return jsonify(encode.settings(cfg))
+
+
 # ---------------------------------------------------------------- controls
 
 
@@ -243,6 +250,17 @@ def discard(pid):
     except library.PlanError as e:
         abort(404, str(e))
     return jsonify(ok=True)
+
+
+@app.post("/api/encode")
+def encode_save():
+    """{enabled, window_start "HH:MM", window_end, codec "h264"|"h265", keep_originals}.
+    The encoder picks changes up within 15 s."""
+    require_token()
+    try:
+        return jsonify(encode.save_settings(cfg, body()))
+    except ValueError as e:
+        abort(400, str(e))
 
 
 @app.delete("/api/known-discs/<fp>")

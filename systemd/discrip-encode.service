@@ -1,0 +1,21 @@
+[Unit]
+Description=discrip: overnight re-encoding of DVD rips (one file at a time)
+RequiresMountsFor=/srv /var/lib/discrip
+
+[Service]
+Type=simple
+User=@OWNER@
+UMask=0002
+ExecStart=/opt/discrip/bin/encoder
+Restart=always
+RestartSec=30
+# Only use the CPU and disk when nothing else wants them.
+Nice=19
+CPUSchedulingPolicy=idle
+IOSchedulingClass=idle
+# ffmpeg is a child in its own session: stop all of it.
+KillMode=control-group
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

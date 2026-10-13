@@ -44,6 +44,15 @@ DEFAULTS = {
         "abcde_conf": "/opt/discrip/abcde.conf",
         "rip_timeout": 3600,
     },
+    "encode": {
+        # Defaults; the web app stores changes in /var/lib/discrip/encode.json.
+        "enabled": True,
+        "window_start": "01:00",   # HH:MM; a window may cross midnight
+        "window_end": "07:00",
+        "codec": "h264",           # h264 (plays everywhere) or h265 (smaller, slower)
+        "keep_originals": False,   # True: keep the MPEG-2 file in _originals/
+        "max_temp": 75,            # pause above this CPU temperature (resume 5 below)
+    },
     "web": {
         "port": 8080,
         "token": "",               # shared secret for controls; setup/03-discrip.sh makes one
