@@ -133,7 +133,9 @@ All thresholds live in config. When unsure, ask the user rather than guess.
 
 ### 8.1 Locking
 
-- One rip at a time. Use `flock` on `/run/discrip/lock` (or equivalent). A second trigger while busy is queued or rejected with a visible message (decision in 11).
+- One rip at a time: `dispatch` holds `flock` on `/run/discrip/lock` (tmpfs, so a crash or reboot can't leave it held) for the whole job. A disc that becomes ready while a rip runs is **rejected** (decided 2026-10-13): no second rip starts and `message` in the state file says so.
+- **Stale jobs:** a `job` in the state file while nobody holds the lock was cut short by a reboot, crash or kill. The watcher (at startup) and `dispatch` (before starting) move it into history as `error` ("interrupted at stage ...").
+- `systemctl stop discrip-rip` sends SIGTERM to the whole unit; `dispatch` records the job as `cancelled`.
 - Pending naming prompts do not hold the lock.
 
 ### 8.2 State file
@@ -144,7 +146,8 @@ All thresholds live in config. When unsure, ask the user rather than guess.
 {
   "schema_version": 2,
   "updated_at": "2026-10-13T09:00:00Z",
-  "drive": { "present": true, "media": "dvd", "label": "SOME_DISC" },
+  "drive": { "present": true, "status": "ready", "media": "dvd", "label": "SOME_DISC", "last_poll": "2026-10-13T09:00:00Z" },
+  "message": null,
   "job": {
     "id": "20261013-090000",
     "type": "video",
@@ -184,7 +187,9 @@ All thresholds live in config. When unsure, ask the user rather than guess.
 ```
 
 - `job.stage` values: `idle`, `detecting`, `scanning`, `ripping`, `moving`, `ejecting`, `done`, `error`, `cancelled`.
-- `job` is `null` when idle. `history` keeps the last N jobs (default 50).
+- `job` is `null` when idle. `history` is newest first and keeps the last N jobs (`[state] history_max`, default 50). `history[].result` values: `ok`, `error`, `cancelled`, `skipped`.
+- `drive` is written by the watcher: `status` is `no_disc`, `tray_open`, `not_ready`, `ready`, `missing` or `unresponsive`, and `last_poll` is refreshed at least every 30 s (a stale value means the watcher is dead). `media` (`dvd`, `bluray`, `audio`, `data_cd`, `none`, `unknown`) and `label` are filled in by `dispatch`.
+- `message` is `null` or `{"text": ..., "at": ...}`: a notice not tied to a job, such as a rejected disc. Cleared when the next job starts.
 - `pending[].prompt` values: `name_film`, `tv_plan`, `choose_titles`. A pending item survives reboots and does not block the next disc.
 - System metrics (temperature, throttling, free space) are computed by the web app at request time, not stored in this file.
 
@@ -261,8 +266,8 @@ Auth and exposure:
 ## 11. Open decisions (resolve with the user before or during build)
 
 1. Default `--minlength` and the film/season duration thresholds in 7.1.1. Validate against a few real discs and tune.
-2. If a disc is inserted while busy: queue, or reject with a message?
-3. Auto-start on insert, or require a tap on `/api/start`? Default auto-start with a config switch.
+2. If a disc is inserted while busy: queue, or reject with a message? **Decided 2026-10-13:** reject with a message (8.1).
+3. Auto-start on insert, or require a tap on `/api/start`? **Decided 2026-10-13:** auto-start, switchable with `[dispatch] auto_start`.
 4. Jellyfin refresh: API call after move, or rely on its own scanning?
 5. TVmaze lookup on by default?
 6. Include DVD extras by default? (Proposed: no.)

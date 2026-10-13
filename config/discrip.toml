@@ -21,3 +21,7 @@ ready_timeout = 60       # dispatch: seconds to wait for "disc ready"
 auto_start = true        # start a rip when a disc becomes ready
 rip_unit = "discrip-rip.service"
 eject_when_done = true
+min_free_gb = 25         # refuse to rip below this much free space in [paths] media
+
+[state]
+history_max = 50         # jobs kept in state.json history

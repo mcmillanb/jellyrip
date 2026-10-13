@@ -34,6 +34,10 @@ DEFAULTS = {
         "auto_start": True,
         "rip_unit": "discrip-rip.service",
         "eject_when_done": True,
+        "min_free_gb": 25,
+    },
+    "state": {
+        "history_max": 50,
     },
 }
 
@@ -118,6 +122,7 @@ def empty_state():
         "drive": {"present": False, "status": None, "media": None, "label": None,
                   "last_poll": None},
         "job": None,
+        "message": None,
         "pending": [],
         "history": [],
     }
@@ -142,6 +147,89 @@ def state_update(cfg):
         tmp = path.with_name(f".state.json.{os.getpid()}")
         tmp.write_text(json.dumps(state, indent=2) + "\n")
         os.replace(tmp, path)
+
+
+# ---------------------------------------------------------------- rip lock and jobs
+
+
+class Busy(Exception):
+    """Another process holds the rip lock."""
+
+
+@contextlib.contextmanager
+def rip_lock(cfg, wait=0):
+    """Hold the one-rip-at-a-time lock (flock on run_dir/lock); raise Busy if taken.
+
+    The lock lives on tmpfs, so a reboot or crash can't leave it held.
+    """
+    with open(Path(cfg["paths"]["run_dir"]) / "lock", "a") as f:
+        deadline = time.monotonic() + wait
+        while True:
+            try:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise Busy() from None
+                time.sleep(0.2)
+        yield
+
+
+def _close_job(cfg, state, result, error=None, output=None):
+    job = state["job"]
+    state["history"].insert(0, {
+        "id": job["id"],
+        "type": job["type"],
+        "title": job["title"],
+        "result": result,
+        "finished_at": now_iso(),
+        "output": output,
+        "error": error,
+    })
+    del state["history"][cfg["state"]["history_max"]:]
+    state["job"] = None
+
+
+def start_job(cfg, job_id):
+    with state_update(cfg) as state:
+        state["job"] = {
+            "id": job_id, "type": None, "kind": None, "stage": "detecting",
+            "title": None, "percent": None, "detail": None,
+            "started_at": now_iso(), "error": None,
+        }
+        state["message"] = None
+
+
+def update_job(cfg, **fields):
+    with state_update(cfg) as state:
+        if state["job"]:
+            state["job"].update(fields)
+
+
+def finish_job(cfg, result, error=None, output=None):
+    """Move the current job into history. result: ok, error, cancelled or skipped."""
+    with state_update(cfg) as state:
+        if state["job"]:
+            _close_job(cfg, state, result, error, output)
+
+
+def recover_stale_job(cfg):
+    """Close a job left behind by a crash or reboot. Caller must hold rip_lock.
+
+    Returns the stale job, or None.
+    """
+    with state_update(cfg) as state:
+        job = state["job"]
+        if job:
+            _close_job(cfg, state, "error", f"interrupted at stage {job['stage']!r} "
+                       "(reboot, crash or kill)")
+        return job
+
+
+def set_message(cfg, text):
+    """A notice for the UI that isn't tied to a job (e.g. a rejected disc)."""
+    with state_update(cfg) as state:
+        state["message"] = {"text": text, "at": now_iso()} if text else None
 
 
 # ---------------------------------------------------------------- systemd

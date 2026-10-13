@@ -27,7 +27,8 @@ def start_rip(cfg):
         return
     active = subprocess.run(["systemctl", "is-active", "--quiet", unit]).returncode == 0
     if active:
-        log.warning("disc ready but %s is already running; ignoring", unit)
+        log.warning("disc ready but %s is already running; not starting another", unit)
+        discrip.set_message(cfg, "A rip is already running; the new disc was not started.")
         return
     r = subprocess.run(["systemctl", "start", "--no-block", unit],
                        capture_output=True, text=True)
@@ -58,6 +59,17 @@ def main():
     last_ok = time.monotonic()
     last_write = 0.0
     error_logged = False
+
+    # A job left in state.json with nobody holding the rip lock was cut short by a
+    # reboot or crash. Clear it before a new disc can start a rip.
+    try:
+        with discrip.rip_lock(cfg):
+            stale = discrip.recover_stale_job(cfg)
+            if stale:
+                log.warning("job %s was interrupted at %r; marked as error",
+                            stale["id"], stale["stage"])
+    except discrip.Busy:
+        pass
 
     discrip.sd_notify("READY=1")
     log.info("watching %s", ", ".join(cfg["drive"]["device"]))

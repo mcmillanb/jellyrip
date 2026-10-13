@@ -3,10 +3,12 @@
 
 Started by discrip-watcher via discrip-rip.service. Reads the disc itself rather
 than trusting udev properties: dvd-reset-auth, then cdrom_id and blkid -p.
-Build step 3: classification and eject only, no rippers yet.
+Holds the rip lock and records the job in state.json (step 4). No rippers yet.
 """
 import logging
 import os
+import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -70,28 +72,27 @@ def classify(cd):
     return "unknown"
 
 
-def main():
-    cfg = discrip.load_config()
-    job_id = time.strftime("%Y%m%d-%H%M%S")
-    log_dir = Path(cfg["paths"]["state_dir"]) / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    job_log = logging.FileHandler(log_dir / f"{job_id}.log")
-    job_log.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
-    logging.getLogger().addHandler(job_log)
-    log.info("job %s", job_id)
+class Cancelled(Exception):
+    pass
 
-    if not os.path.ismount("/srv"):
-        log.error("/srv is not mounted; refusing to run")
-        return 1
 
-    dev = discrip.find_drive(cfg)
-    if dev is None:
-        log.error("no drive found (%s)", ", ".join(cfg["drive"]["device"]))
-        return 1
-    log.info("drive %s", dev)
+def on_sigterm(signum, frame):
+    raise Cancelled()
+
+
+def check_free_space(cfg):
+    """Return an error string if /srv/media is below min_free_gb, else None."""
+    free_gb = shutil.disk_usage(cfg["paths"]["media"]).free / 1e9
+    if free_gb < cfg["dispatch"]["min_free_gb"]:
+        return (f"only {free_gb:.0f} GB free on {cfg['paths']['media']} "
+                f"(minimum {cfg['dispatch']['min_free_gb']} GB)")
+    return None
+
+
+def rip(cfg, dev):
+    """Detect and rip the disc. Returns (result, error)."""
     if not wait_ready(dev, cfg["drive"]["ready_timeout"]):
-        return 1
+        return "error", "no readable disc (drive never became ready)"
     # Before anything else: stuck CSS AGIDs make MakeMKV fail with "Failed to
     # open disc". Harmless (rc=1) on a CD.
     run([BIN / "dvd-reset-auth", dev], timeout=30)
@@ -110,22 +111,72 @@ def main():
     with discrip.state_update(cfg) as state:
         state["drive"]["media"] = media
         state["drive"]["label"] = label
+    job_type = {"dvd": "video", "bluray": "video", "audio": "audio"}.get(media)
+    discrip.update_job(cfg, type=job_type, title=label)
 
-    if media == "dvd":
-        log.info("would rip: video DVD (video ripper not built yet)")
-    elif media == "audio":
-        log.info("would rip: audio CD (audio ripper not built yet)")
-    elif media == "bluray":
-        log.error("Blu-ray not supported")
+    if media == "bluray":
+        result, error = "error", "Blu-ray not supported"
+    elif job_type is None:
+        result, error = "error", f"no ripper for media type {media!r}"
+    elif error := check_free_space(cfg):
+        result = "error"
     else:
-        log.error("no ripper for media type %r", media)
+        log.info("would rip: %s (%s ripper not built yet)", media, job_type)
+        result, error = "skipped", f"{job_type} ripper not built yet"
 
     if cfg["dispatch"]["eject_when_done"]:
+        discrip.update_job(cfg, stage="ejecting")
         if discrip.eject(dev):
             log.info("ejected")
         else:
             log.error("eject failed: tray did not open")
-    return 0
+    return result, error
+
+
+def main():
+    cfg = discrip.load_config()
+    job_id = time.strftime("%Y%m%d-%H%M%S")
+    log_dir = Path(cfg["paths"]["state_dir"]) / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    job_log = logging.FileHandler(log_dir / f"{job_id}.log")
+    job_log.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    logging.getLogger().addHandler(job_log)
+    log.info("job %s", job_id)
+
+    if not os.path.ismount("/srv"):
+        log.error("/srv is not mounted; refusing to run")
+        return 1
+
+    signal.signal(signal.SIGTERM, on_sigterm)
+    try:
+        # A short wait: the watcher takes the lock briefly at startup.
+        with discrip.rip_lock(cfg, wait=5):
+            stale = discrip.recover_stale_job(cfg)
+            if stale:
+                log.warning("job %s was interrupted at %r; marked as error",
+                            stale["id"], stale["stage"])
+            discrip.start_job(cfg, job_id)
+            try:
+                dev = discrip.find_drive(cfg)
+                if dev is None:
+                    result, error = "error", "no drive found"
+                else:
+                    log.info("drive %s", dev)
+                    result, error = rip(cfg, dev)
+            except Cancelled:
+                result, error = "cancelled", None
+            except Exception as e:
+                log.exception("dispatch failed")
+                result, error = "error", f"internal error: {e}"
+            (log.info if result in ("ok", "skipped", "cancelled") else log.error)(
+                "job %s: %s%s", job_id, result, f" ({error})" if error else "")
+            discrip.finish_job(cfg, result, error)
+            return 0 if result in ("ok", "skipped", "cancelled") else 1
+    except discrip.Busy:
+        log.error("another rip is running; not starting")
+        discrip.set_message(cfg, "A rip is already running; the new disc was not started.")
+        return 1
 
 
 if __name__ == "__main__":
