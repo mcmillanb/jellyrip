@@ -4,6 +4,8 @@
 Every 15 s: work out whether encoding may run (switch, time window, no rip, no
 Jellyfin playback, CPU not hot); pause or resume the running ffmpeg to match,
 or start the next file. Publishes its status as "encode" in state.json.
+Logs the CPU temperature once a minute (encode.record_temp) and keeps the peak
+and average for each encode.
 """
 import logging
 import shutil
@@ -20,6 +22,8 @@ import library  # noqa: E402
 log = logging.getLogger("encoder")
 TICK = 15
 INDEX_EVERY = 600
+TEMP_EVERY = 60
+TRIM_EVERY = 3600
 
 
 class Stop(Exception):
@@ -33,6 +37,12 @@ def on_term(signum, frame):
 def publish(cfg, status):
     with discrip.state_update(cfg) as state:
         state["encode"] = status
+
+
+def temp_summary(temps):
+    if not temps:
+        return {}
+    return {"peak_c": max(temps), "avg_c": round(sum(temps) / len(temps), 1)}
 
 
 def main():
@@ -51,6 +61,8 @@ def main():
     last_tick = time.monotonic()
     pending_count, indexed_at = 0, 0.0
     last_result = None
+    temp_at, trimmed_at = 0.0, 0.0
+    job_temps = []       # samples while the current job was actually encoding
     try:
         while True:
             now = time.monotonic()
@@ -73,7 +85,11 @@ def main():
                 else:
                     log.error("encode of %s failed: %s (original kept)", rel, msg)
                     encode.mark(cfg, str(job.src), status="failed", error=msg)
-                last_result = {"file": rel, "ok": ok, "message": msg, "at": discrip.now_iso()}
+                last_result = {"file": rel, "ok": ok, "message": msg, "at": discrip.now_iso(),
+                               **temp_summary(job_temps)}
+                if job_temps:
+                    log.info("%s: CPU peaked at %.1f °C, averaged %.1f °C", rel,
+                             last_result["peak_c"], last_result["avg_c"])
                 job, indexed_at = None, 0.0
             elif job and reason == "turned off":
                 log.info("encoding turned off: stopping %s", job.src.name)
@@ -96,6 +112,7 @@ def main():
                 if todo:
                     job = encode.Job(cfg, todo[0], s["codec"])
                     active_s = 0.0
+                    job_temps = []
                     try:
                         job.start()
                     except Exception as e:  # noqa: BLE001 - one bad file must not stop the rest
@@ -103,6 +120,16 @@ def main():
                         encode.mark(cfg, todo[0], status="failed", error=str(e))
                         job.cleanup()
                         job, indexed_at = None, 0.0
+
+            if now - temp_at >= TEMP_EVERY:
+                temp_at = now
+                state = ("paused" if job.paused else "encoding") if job else "idle"
+                t = encode.record_temp(cfg, state)
+                if t is not None and state == "encoding":
+                    job_temps.append(t)
+            if now - trimmed_at >= TRIM_EVERY:
+                trimmed_at = now
+                encode.trim_temps(cfg)
 
             status = {"enabled": s["enabled"], "window": f"{s['window_start']}-{s['window_end']}",
                       "codec": s["codec"], "queue": pending_count, "last": last_result,
@@ -114,7 +141,7 @@ def main():
                 status.update(state="paused" if job.paused else "encoding",
                               file=str(job.src.relative_to(media)), percent=job.percent,
                               speed=round(job.done_s / active_s, 2) if active_s > 60 else None,
-                              eta_hours=eta)
+                              eta_hours=eta, **temp_summary(job_temps))
             publish(cfg, status)
             time.sleep(TICK)
     except (Stop, KeyboardInterrupt):

@@ -87,6 +87,11 @@ details > summary::-webkit-details-marker { display: none; }
 pre { white-space: pre-wrap; word-break: break-all; font-size: 12px; line-height: 1.35;
       max-height: 60vh; overflow: auto; background: var(--bg); padding: 10px; border-radius: 8px; }
 .muted { color: var(--muted); }
+#temp-chart text { fill: var(--muted); font-size: 10px; }
+#temp-chart .grid-l { stroke: var(--line); stroke-width: 1; }
+#temp-chart .limit { stroke: var(--bad); stroke-width: 1; stroke-dasharray: 4 3; }
+#temp-chart .enc { fill: var(--accent); opacity: .14; }
+#temp-chart .line { fill: none; stroke: var(--accent); stroke-width: 1.6; stroke-linejoin: round; }
 .empty { color: var(--muted); text-align: center; padding: 6px 0; }
 .toast { position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom));
          transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 10px 16px;
@@ -114,6 +119,15 @@ pre { white-space: pre-wrap; word-break: break-all; font-size: 12px; line-height
     <div class="title" id="enc-title">…</div>
     <div class="sub" id="enc-sub"></div>
     <div class="bar" id="enc-bar" hidden><div></div></div>
+    <details id="temp-d" style="margin-top:10px"><summary class="muted">CPU temperature</summary>
+      <span class="seg" style="margin-top:8px">
+        <label><input type="radio" name="temp-h" value="12"><span>12 h</span></label>
+        <label><input type="radio" name="temp-h" value="24" checked><span>24 h</span></label>
+        <label><input type="radio" name="temp-h" value="168"><span>7 days</span></label>
+      </span>
+      <svg id="temp-chart" viewBox="0 0 320 140" style="width:100%;height:auto;margin-top:8px;display:block" role="img" aria-label="CPU temperature chart"></svg>
+      <div class="sub" id="temp-sum"></div>
+    </details>
     <details id="enc-d" style="margin-top:10px"><summary class="muted">Settings</summary>
       <label class="check" style="border:none"><input type="checkbox" id="enc-on"> <span>Re-encode DVD rips to save space</span></label>
       <div class="grid" style="grid-template-columns:1fr 1fr">
@@ -431,18 +445,79 @@ function renderEncode(s) {
     const name = e.file.split("/").pop().replace(/\.mkv$/, "");
     $("#enc-title").textContent = (e.state === "paused" ? "Paused: " : "Encoding: ") + name;
     const eta = e.eta_hours != null && e.state === "encoding" ? ` · about ${e.eta_hours} h left` : "";
-    $("#enc-sub").textContent = `${Math.round(e.percent)}% · ${codec}${eta}` +
+    const heat = e.peak_c != null ? ` · CPU peak ${Math.round(e.peak_c)} °C` : "";
+    $("#enc-sub").textContent = `${Math.round(e.percent)}% · ${codec}${eta}${heat}` +
       (e.state === "paused" ? ` · ${e.reason}` : "") + ` · ${left}`;
     bar.hidden = false;
     bar.querySelector("div").style.width = e.percent + "%";
   } else {
     $("#enc-title").textContent = e.state === "off" ? "Off" : left;
     const when = e.queue && e.reason ? ` · waiting: ${e.reason}` : "";
-    const lastTxt = e.last ? ` · last: ${e.last.file.split("/").pop()} ${e.last.ok ? "✓ " : "✕ "}${e.last.message}` : "";
+    const lastTxt = e.last ? ` · last: ${e.last.file.split("/").pop()} ${e.last.ok ? "✓ " : "✕ "}${e.last.message}` +
+      (e.last.peak_c != null ? ` (CPU peak ${Math.round(e.last.peak_c)} °C, average ${Math.round(e.last.avg_c)} °C)` : "") : "";
     $("#enc-sub").textContent = `${codec} · ${e.window}${when}${lastTxt}`;
     bar.hidden = true;
   }
 }
+// CPU temperature log: shaded where an encode was running, dashed line at the
+// pause limit. Refreshed every minute while open.
+async function drawTemps() {
+  if (!$("#temp-d").open) return;
+  const hours = +document.querySelector("input[name=temp-h]:checked").value;
+  const { samples, max_temp } = await api("GET", `/api/temps?hours=${hours}`);
+  const svg = $("#temp-chart");
+  if (!samples.length) {
+    svg.innerHTML = `<text x="160" y="70" text-anchor="middle">No samples yet: one is taken each minute</text>`;
+    $("#temp-sum").textContent = "";
+    return;
+  }
+  const W = 320, H = 140, L = 28, R = 6, T = 6, B = 18;
+  const t1 = Date.now(), t0 = t1 - hours * 3600e3;
+  const cs = samples.map((p) => p.c);
+  const lo = Math.floor(Math.min(40, ...cs) / 10) * 10, hi = Math.ceil(Math.max(max_temp + 5, ...cs) / 10) * 10;
+  const x = (t) => L + (t - t0) / (t1 - t0) * (W - L - R);
+  const y = (c) => T + (hi - c) / (hi - lo) * (H - T - B);
+  let out = "";
+  for (let c = lo; c <= hi; c += 10)
+    out += `<line class="grid-l" x1="${L}" x2="${W - R}" y1="${y(c)}" y2="${y(c)}"/><text x="${L - 4}" y="${y(c) + 3}" text-anchor="end">${c}°</text>`;
+  // Encoding spans (a gap of over 3 minutes ends a span).
+  let span = null;
+  const spans = [];
+  for (const p of samples) {
+    const t = Date.parse(p.t);
+    if (p.state === "encoding") {
+      if (span && t - span[1] < 180e3) span[1] = t; else spans.push(span = [t, t]);
+    } else span = null;
+  }
+  for (const [a, b] of spans) out += `<rect class="enc" x="${x(a)}" y="${T}" width="${Math.max(x(b + 60e3) - x(a), 1)}" height="${H - T - B}"/>`;
+  out += `<line class="limit" x1="${L}" x2="${W - R}" y1="${y(max_temp)}" y2="${y(max_temp)}"/>`;
+  // Line, broken where samples are missing (the Pi was off or the encoder stopped).
+  let path = "", prev = null;
+  for (const p of samples) {
+    const t = Date.parse(p.t);
+    path += (prev && t - prev < 180e3 ? "L" : "M") + x(t).toFixed(1) + " " + y(p.c).toFixed(1);
+    prev = t;
+  }
+  out += `<path class="line" d="${path}"/>`;
+  const fmt = (t) => new Date(t).toLocaleString([], hours > 24 ? { weekday: "short" } : { hour: "2-digit", minute: "2-digit" });
+  for (const f of [0, 0.5, 1]) {
+    const t = t0 + f * (t1 - t0);
+    out += `<text x="${x(t)}" y="${H - 4}" text-anchor="${f === 0 ? "start" : f === 1 ? "end" : "middle"}">${fmt(t)}</text>`;
+  }
+  svg.innerHTML = out;
+  const enc = samples.filter((p) => p.state === "encoding").map((p) => p.c);
+  const idle = samples.filter((p) => p.state === "idle").map((p) => p.c);
+  const avg = (a) => (a.reduce((s, v) => s + v, 0) / a.length).toFixed(0);
+  const capped = samples.some((p) => p.throttled && (parseInt(p.throttled, 16) & 0xe));
+  $("#temp-sum").textContent = `Now ${cs[cs.length - 1]} °C` +
+    (enc.length ? ` · encoding: peak ${Math.max(...enc)} °C, average ${avg(enc)} °C` : " · no encoding in this period") +
+    (idle.length ? ` · idle average ${avg(idle)} °C` : "") +
+    ` · pauses at ${max_temp} °C` + (capped ? " · the Pi throttled itself in this period" : "");
+}
+$("#temp-d").ontoggle = drawTemps;
+document.querySelectorAll("input[name=temp-h]").forEach((r) => r.onchange = drawTemps);
+setInterval(drawTemps, 60e3);
+
 let encLoaded = false;
 $("#enc-d").ontoggle = async () => {
   if (!$("#enc-d").open || encLoaded) return;

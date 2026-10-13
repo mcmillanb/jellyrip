@@ -196,6 +196,86 @@ def cpu_temp():
         return None
 
 
+def cpu_mhz():
+    try:
+        return int(Path("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq")
+                   .read_text()) // 1000
+    except (OSError, ValueError):
+        return None
+
+
+def throttled():
+    """vcgencmd get_throttled as an int, or None."""
+    try:
+        out = subprocess.run(["vcgencmd", "get_throttled"], capture_output=True, text=True,
+                             timeout=5).stdout
+        return int(out.strip().split("=")[1], 16)
+    except (OSError, ValueError, IndexError, subprocess.TimeoutExpired):
+        return None
+
+
+# ---------------------------------------------------------------- temperature log
+# One line a minute, encoding or not, so a night's encode can be compared with
+# the idle baseline: "time,temp_c,mhz,throttled,state". Kept for TEMPS_DAYS.
+
+TEMPS_DAYS = 7
+
+
+def temps_path(cfg):
+    return Path(cfg["paths"]["state_dir"]) / "temps.csv"
+
+
+def record_temp(cfg, state):
+    t = cpu_temp()
+    if t is None:
+        return None
+    th = throttled()
+    path = temps_path(cfg)
+    with open(path, "a") as f:
+        f.write(f"{discrip.now_iso()},{t:.1f},{cpu_mhz() or ''},"
+                f"{'' if th is None else hex(th)},{state}\n")
+    return t
+
+
+def trim_temps(cfg):
+    path = temps_path(cfg)
+    cutoff = (datetime.datetime.now(datetime.timezone.utc)
+              - datetime.timedelta(days=TEMPS_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        lines = path.read_text().splitlines(keepends=True)
+    except FileNotFoundError:
+        return
+    keep = [ln for ln in lines if ln[:20] >= cutoff]  # same format as discrip.now_iso
+    if len(keep) < len(lines):
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text("".join(keep))
+        os.replace(tmp, path)
+
+
+def read_temps(cfg, hours=24):
+    """Samples from the last `hours`: [{t, c, mhz, throttled, state}], oldest first."""
+    cutoff = time.time() - hours * 3600
+    out = []
+    try:
+        lines = temps_path(cfg).read_text().splitlines()
+    except FileNotFoundError:
+        return out
+    for ln in lines:
+        parts = ln.split(",")
+        if len(parts) != 5:
+            continue
+        try:
+            when = datetime.datetime.fromisoformat(parts[0])
+            if when.timestamp() < cutoff:
+                continue
+            out.append({"t": parts[0], "c": float(parts[1]),
+                        "mhz": int(parts[2]) if parts[2] else None,
+                        "throttled": parts[3] or None, "state": parts[4]})
+        except ValueError:
+            continue
+    return out
+
+
 def rip_running(cfg):
     st = subprocess.run(["systemctl", "is-active", cfg["dispatch"]["rip_unit"]],
                         capture_output=True, text=True).stdout.strip()

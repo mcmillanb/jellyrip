@@ -170,6 +170,16 @@ def encode_settings():
     return jsonify(encode.settings(cfg))
 
 
+@app.get("/api/temps")
+def temps():
+    """CPU temperature log, one sample a minute: ?hours=24 (1-168)."""
+    try:
+        hours = min(max(float(request.args.get("hours", 24)), 1), 24 * encode.TEMPS_DAYS)
+    except ValueError:
+        abort(400, "bad hours")
+    return jsonify(samples=encode.read_temps(cfg, hours), max_temp=cfg["encode"]["max_temp"])
+
+
 # ---------------------------------------------------------------- controls
 
 
