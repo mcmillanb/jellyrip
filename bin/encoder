@@ -68,6 +68,8 @@ def main():
                 if ok:
                     log.info("encoded %s: %s", rel, msg)
                     library.jellyfin_refresh(cfg)
+                elif ok is None:
+                    log.info("%s: %s", rel, msg)
                 else:
                     log.error("encode of %s failed: %s (original kept)", rel, msg)
                     encode.mark(cfg, str(job.src), status="failed", error=msg)

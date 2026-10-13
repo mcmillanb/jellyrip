@@ -230,6 +230,8 @@ class Job:
         self.cfg, self.src, self.codec = cfg, Path(src), codec
         self.work = Path(cfg["paths"]["media"]) / "_work" / f"encode-{int(time.time())}"
         self.out = self.work / self.src.name
+        st = self.src.stat()
+        self.src_id = (st.st_ino, st.st_size, st.st_mtime_ns)  # to notice a re-rip
         self.info = probe(self.src)
         self.duration = self.info["duration"] if self.info else 0
         self.done_s = 0.0
@@ -294,7 +296,7 @@ class Job:
 
     def finish(self, keep_original):
         """Check the encode and put it in place of the original. Returns
-        (ok, message)."""
+        (ok, message); ok is None if the original changed meanwhile (not a failure)."""
         rc = self.proc.wait()
         try:
             if rc != 0:
@@ -310,6 +312,11 @@ class Job:
                 return False, "audio/subtitle streams differ from the original"
             if not self.src.exists():
                 return False, "the original disappeared while encoding"
+            st = self.src.stat()
+            if (st.st_ino, st.st_size, st.st_mtime_ns) != self.src_id:
+                # e.g. the disc was ripped again meanwhile: keep the new rip; it is
+                # queued again because its size and mtime changed.
+                return None, "the original changed while encoding; result discarded"
             before, after = self.src.stat().st_size, self.out.stat().st_size
             os.chmod(self.out, 0o664)
             if keep_original:
