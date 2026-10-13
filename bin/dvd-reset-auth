@@ -1,0 +1,66 @@
+#!/usr/bin/env python3
+"""Free all four CSS authentication slots (AGIDs) on a DVD drive.
+
+A failed or interrupted CSS handshake (e.g. a MakeMKV run that died) can leave
+the drive's AGIDs allocated. New handshakes then fail with COMMAND SEQUENCE
+ERROR / KEY NOT PRESENT and MakeMKV reports "Failed to open disc".
+Sends REPORT KEY with key format 0x3F (INVALIDATE AGID) for AGIDs 0-3, then
+checks a fresh AGID can be allocated (and releases it again).
+
+Usage: dvd-reset-auth [/dev/sr0]   (needs read access to the device; run as root)
+Exit 0 if a new handshake can start, 1 otherwise.
+"""
+import ctypes
+import fcntl
+import os
+import sys
+
+SG_IO = 0x2285
+SG_DXFER_NONE, SG_DXFER_FROM_DEV = -1, -3
+
+
+class SgIoHdr(ctypes.Structure):
+    _fields_ = [("interface_id", ctypes.c_int), ("dxfer_direction", ctypes.c_int),
+                ("cmd_len", ctypes.c_ubyte), ("mx_sb_len", ctypes.c_ubyte),
+                ("iovec_count", ctypes.c_ushort), ("dxfer_len", ctypes.c_uint),
+                ("dxferp", ctypes.c_void_p), ("cmdp", ctypes.c_void_p),
+                ("sbp", ctypes.c_void_p), ("timeout", ctypes.c_uint),
+                ("flags", ctypes.c_uint), ("pack_id", ctypes.c_int),
+                ("usr_ptr", ctypes.c_void_p), ("status", ctypes.c_ubyte),
+                ("masked_status", ctypes.c_ubyte), ("msg_status", ctypes.c_ubyte),
+                ("sb_len_wr", ctypes.c_ubyte), ("host_status", ctypes.c_ushort),
+                ("driver_status", ctypes.c_ushort), ("resid", ctypes.c_int),
+                ("duration", ctypes.c_uint), ("info", ctypes.c_uint)]
+
+
+def report_key(fd, agid, key_format, length=0):
+    buf = ctypes.create_string_buffer(max(length, 1))
+    sense = ctypes.create_string_buffer(32)
+    cdb = (ctypes.c_ubyte * 12)(0xA4, 0, 0, 0, 0, 0, 0, 0, 0, length,
+                                (agid << 6) | key_format, 0)
+    hdr = SgIoHdr(ord("S"), SG_DXFER_FROM_DEV if length else SG_DXFER_NONE, 12, 32, 0,
+                  length, ctypes.addressof(buf), ctypes.addressof(cdb),
+                  ctypes.addressof(sense), 10000)
+    fcntl.ioctl(fd, SG_IO, hdr)
+    return hdr.status, buf.raw, sense.raw
+
+
+def main():
+    dev = sys.argv[1] if len(sys.argv) > 1 else "/dev/sr0"
+    fd = os.open(dev, os.O_RDONLY | os.O_NONBLOCK)
+    try:
+        for agid in range(4):
+            report_key(fd, agid, 0x3F)
+        status, data, sense = report_key(fd, 0, 0x00, 8)
+        if status != 0:
+            print(f"{dev}: AGID still unavailable (sense {sense[2] & 15:x}/{sense[12]:02x}/{sense[13]:02x})")
+            return 1
+        report_key(fd, data[7] >> 6, 0x3F)
+        print(f"{dev}: CSS auth slots cleared")
+        return 0
+    finally:
+        os.close(fd)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

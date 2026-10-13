@@ -1,0 +1,289 @@
+# discrip: Pi disc ripping appliance — SPEC
+
+Status: draft v2 (adds automatic naming and TV box sets). Written to be handed to Claude Code running on the target Pi.
+Name `discrip` is a placeholder; rename freely.
+
+## 1. Goal
+
+Insert a disc into a USB drive, walk away, and later find it in Jellyfin with sensible names.
+
+- Film DVD (and Blu-ray if the drive supports it): lossless rip to MKV with MakeMKV, named automatically from the disc.
+- TV season box sets: rip every episode, numbered in disc order and named for Jellyfin.
+- Audio CD: rip to FLAC with abcde, tagged from MusicBrainz.
+- A mobile-friendly web page shows progress, asks the occasional question, and offers basic controls.
+- Jellyfin serves the library from the same box. Samba exposes the files.
+
+## 2. Non-goals (v1)
+
+- No HandBrake or other re-encoding (may be added later as a separate stage).
+- No CYD or other hardware display (the status JSON is designed so one could be added later).
+- No RAID, no multi-drive support, no remote access from outside the LAN.
+- No film metadata lookup: films are named from the disc and Jellyfin does the matching. The only online lookup is optional TV episode names (TVmaze, see 8.4).
+- No splitting of a whole season welded into one title (flag it, rip it as one file).
+
+## 3. Target hardware and OS
+
+- Raspberry Pi 4 (RAM TBC), official 3 A PSU.
+- Raspberry Pi OS Lite (64-bit), headless. Boots from a Kingston XS1000 (USB 3.0 SSD, ~1 TB). No SD card in normal use.
+- USB DVD drive (slim, bus-powered, ~2-3 W). Device appears as `/dev/sr0`.
+- Wired Ethernet. Hostname TBC (e.g. `ripper`), reachable as `<hostname>.local`.
+- Case: custom 3D-printed (PETG/ASA). Thermal and power health must be visible in the UI (see 9).
+
+Assumptions to verify on first boot, not to trust blindly:
+
+- USB boot from the XS1000 works (update bootloader EEPROM if not).
+- The XS1000 and the DVD drive can both run bus-powered without undervoltage. Check `vcgencmd get_throttled` under a real rip. If it shows undervoltage, use a powered USB hub.
+
+## 4. Storage layout
+
+Single drive holds the OS and the library. Keep it simple: one root filesystem (ext4).
+
+```
+/srv/media/
+  _work/             # in-progress rips and temp files (not in Jellyfin)
+  _inbox/            # finished rips waiting for a name or confirmation (not in Jellyfin)
+  Movies/            # Jellyfin Movies library: Name/Name.mkv  (Name (Year)/ only if a year is known)
+  TV/                # Jellyfin Shows library: Show/Season 01/Show - S01E01 - Title.mkv
+  Music/             # Jellyfin Music library: Artist/Album/NN - Title.flac
+  _unknown_music/    # CD rips with no MusicBrainz match (manual tagging)
+/opt/discrip/        # code, scripts, config
+/var/lib/discrip/    # state.json, known_discs.json, library.json, logs
+```
+
+- Refuse to start a rip if free space < configurable threshold (default 25 GB). Show the reason in the UI.
+- Nothing reaches `Movies/` or `TV/` until the rip has finished and its name is resolved. Files are written to `_work/` and moved with an atomic rename (same filesystem).
+
+## 5. Components
+
+1. **udev rule + systemd template unit**: disc detection and triggering.
+2. **dispatcher**: classifies the disc type (audio / video) and calls the right ripper.
+3. **ripper-video**: MakeMKV wrapper, disc classification (film vs season), naming.
+4. **ripper-audio**: abcde wrapper.
+5. **state file + lock**: single source of truth for status.
+6. **web app**: Flask or FastAPI, status page, prompts and controls.
+7. **Jellyfin**: Docker container.
+8. **Samba**: network access to `/srv/media`.
+
+## 6. Disc detection and triggering
+
+Important constraint: udev kills long-running processes started directly from a rule. The rule must only start a systemd service; the service does the work.
+
+- Rule on the optical device, on media-change events when media is present. Use `udevadm monitor --property` and `udevadm info /dev/sr0` with a disc inserted to find the right properties; do not guess. Likely candidates: `ACTION=="change"`, `ENV{ID_CDROM_MEDIA}=="1"` (or `DISK_MEDIA_CHANGE`).
+- Rule sets `TAG+="systemd"` and `ENV{SYSTEMD_WANTS}="discrip@%k.service"`.
+- `discrip@.service` is `Type=oneshot` and runs `/opt/discrip/bin/dispatch %I`.
+- Classification uses udev properties of the inserted media, e.g. `ID_CDROM_MEDIA_TRACK_COUNT_AUDIO` (audio CD), `ID_CDROM_MEDIA_DVD`, `ID_CDROM_MEDIA_BD`. Verify the exact names on this system.
+- Handle the drive spinning up slowly: retry reading media state for a short period before declaring "no readable disc".
+- Unknown or unreadable disc: record an error in state and eject (configurable).
+
+## 7. Rip pipelines
+
+### 7.1 Video (MakeMKV)
+
+- MakeMKV on arm64: `makemkv-bin` ships a prebuilt arm64 `makemkvcon`; `makemkv-oss` is built from source. Follow the official Linux build instructions from the MakeMKV forum (headless: no GUI needed). Document the exact install steps in `/opt/discrip/INSTALL.md` as they are done.
+- Licensing: per makemkv.com/buy, converting DVD (and AVCHD) discs is freeware with no time limit; only Blu-ray is shareware. This build is DVD-only, so no registration key or beta key handling is needed. If Blu-ray is ever added, a key (purchased, or the free monthly beta key) would be required, so keep the config path for one but leave it unused and out of the UI.
+- Detect a Blu-ray in the drive and fail with a clear message ("Blu-ray not supported") instead of attempting a rip.
+- Check `makemkvcon` still starts after upgrades. MakeMKV can refuse to run old versions, so if it reports the version is too old, rebuild from the current release. Log the installed version on each job.
+- Use robot mode (`-r`) throughout. Progress comes from `PRGV`, `PRGT`, `PRGC` and `MSG` lines.
+
+Flow for each video disc:
+
+1. **Info scan**: `makemkvcon -r info disc:0`. Collect the disc name and, per title: index, duration, size, chapter count (`CINFO` / `TINFO` lines).
+2. **Classify** the disc (7.1.1) and choose which titles to rip.
+3. **Rip** the chosen titles to `_work/<job-id>/`, with `--minlength` as a floor.
+4. **Resolve naming** (8.4). If the name is resolved, move into the library. If not, move to `_inbox/<job-id>/` and create a pending entry.
+5. **Eject** (configurable, default on). The drive is then free for the next disc even if a name is still pending.
+
+#### 7.1.1 Classification
+
+All thresholds live in config. When unsure, ask the user rather than guess.
+
+- **Film**: the longest title is >= 60 min and there is no cluster of similar-length titles. Rip that title only. Extras and trailers are skipped (setting to include them).
+- **Season disc**: 3 or more titles with durations in a band of about 18-70 min and within about 20% of the group median. Rip all of them, in disc title order.
+- **Ambiguous**: anything else, or more than 12 candidate titles (some Blu-rays carry dozens of near-identical decoy playlists). Do not rip automatically. Create a pending `choose_titles` prompt listing the titles so the user can pick, and leave the disc in the drive.
+- A whole season welded into one very long title is ripped as one file and flagged in history.
+
+### 7.2 Audio CD (abcde)
+
+- `abcde` with cdparanoia, FLAC output, MusicBrainz lookup. Config in `/opt/discrip/abcde.conf`.
+- Output pattern: `Music/<Artist>/<Album>/<NN> - <Title>.flac`.
+- No metadata match: rip to `_unknown_music/<timestamp>/` and flag it in the UI.
+- Progress: parse abcde/cdparanoia output as best as practical (track N of M is sufficient).
+- Eject on completion (configurable).
+
+## 8. State and locking
+
+### 8.1 Locking
+
+- One rip at a time. Use `flock` on `/run/discrip/lock` (or equivalent). A second trigger while busy is queued or rejected with a visible message (decision in 11).
+- Pending naming prompts do not hold the lock.
+
+### 8.2 State file
+
+`/var/lib/discrip/state.json`, written atomically (write to temp file, then rename). Schema v2:
+
+```json
+{
+  "schema_version": 2,
+  "updated_at": "2026-10-13T09:00:00Z",
+  "drive": { "present": true, "media": "dvd", "label": "SOME_DISC" },
+  "job": {
+    "id": "20261013-090000",
+    "type": "video",
+    "kind": "tv",
+    "stage": "ripping",
+    "title": "Some Show",
+    "percent": 42.5,
+    "detail": "Title 2 of 6",
+    "started_at": "2026-10-13T08:50:00Z",
+    "error": null
+  },
+  "pending": [
+    {
+      "id": "20261012-211500",
+      "prompt": "tv_plan",
+      "disc_label": "SOME_SHOW_S1_D1",
+      "fingerprint": "sha1:...",
+      "suggested": { "show": "Some Show", "season": 1, "first_episode": 1 },
+      "titles": [
+        { "index": 0, "duration_s": 2520, "proposed": "Some Show - S01E01" }
+      ],
+      "inbox_path": "/srv/media/_inbox/20261012-211500"
+    }
+  ],
+  "history": [
+    {
+      "id": "20261012-180000",
+      "type": "audio",
+      "title": "Artist - Album",
+      "result": "ok",
+      "finished_at": "2026-10-12T18:30:00Z",
+      "output": "/srv/media/Music/Artist/Album",
+      "error": null
+    }
+  ]
+}
+```
+
+- `job.stage` values: `idle`, `detecting`, `scanning`, `ripping`, `moving`, `ejecting`, `done`, `error`, `cancelled`.
+- `job` is `null` when idle. `history` keeps the last N jobs (default 50).
+- `pending[].prompt` values: `name_film`, `tv_plan`, `choose_titles`. A pending item survives reboots and does not block the next disc.
+- System metrics (temperature, throttling, free space) are computed by the web app at request time, not stored in this file.
+
+### 8.3 Logs
+
+- Per-job log at `/var/lib/discrip/logs/<job-id>.log` plus the systemd journal. Rotate or cap total size.
+
+### 8.4 Naming
+
+Goal: unattended when the disc gives a usable name, and a single short question when it doesn't.
+
+**Disc fingerprint.** A stable id for "this specific disc", e.g. a sha1 of `ID_FS_LABEL`, `ID_FS_UUID` and the sorted title durations. Used to remember corrections and to tell two different discs of the same film apart. Corrections are stored in `/var/lib/discrip/known_discs.json`; the output path of every rip is recorded against its fingerprint in `/var/lib/discrip/library.json`.
+
+**Films**
+
+- Take the disc name (MakeMKV `CINFO` name, falling back to `ID_FS_LABEL`) and tidy it: underscores to spaces, strip trailing disc/format noise (`DISC1`, `D1`, `WS`, `PAL`, `NTSC`, `BLURAY`), title-case. Example: `BLADE_RUNNER_2049` becomes `Blade Runner 2049`.
+- Output: `Movies/<Name>/<Name>.mkv`.
+- **Never guess a year.** A year appears only if it was in brackets in the label (`Film (1982)`) or the user typed it. `Film.mkv` is acceptable to Jellyfin; `Film (2049).mkv` would be a confident lie.
+- **Junk labels**: DVD labels are often junk (`LOGICAL_VOLUME_ID`, `DVD_VIDEO`, `DVDVOLUME`, all digits, a single generic word). Keep a configurable junk list. For a junk label, create a pending `name_film` prompt; the rip still proceeds and parks in `_inbox/` until answered.
+- **Remember corrections** by fingerprint. The same disc later needs no question.
+
+**Duplicates**
+
+- If the destination already exists and was written by a different fingerprint, do not overwrite. Save alongside with the source on the end: `Name.mkv` and `Name - DVD.mkv` (or `- Bluray`). Jellyfin shows these as versions of one film.
+- Re-ripping the same fingerprint replaces its own file.
+
+**TV season discs** (classification in 7.1.1)
+
+- On the first disc of a season, create a pending `tv_plan` prompt: show name (prefilled from the tidied label), optional year, season number, first episode number, and the proposed list of files in disc order. Nothing is moved into the library until the user confirms.
+- **Disc order is kept.** Title order on the disc is the numbering source. Optionally, on Blu-ray, a "play all" playlist, when present, is the better record of episode order. Disc order and broadcast order can differ (the user can shift the first episode number, which renumbers the whole disc).
+- **Continuation:** after a confirmed disc, remember `show`, `season` and `next_episode`. A following disc whose tidied label matches the previous one apart from the disc number continues automatically from `next_episode`; otherwise it asks, with the continuation as the default.
+- **Output:** `TV/<Show>/Season 01/<Show> - S01E01 - <Episode Title>.mkv`. Year in the folder name (`Show (1990)`) only if known and confirmed.
+- **Episode titles (optional, config `tv_lookup = true`):** look up names from TVmaze (free, no account, `https://api.tvmaze.com`), taking names only and never the order. If offline or no match, name files `Show - S01E01.mkv`.
+- Double-length episodes, or episodes carried twice (with and without a "next time" trailer), are not handled specially in v1. They show up in the plan so the user can spot them; extra files can be removed over Samba.
+
+**Sanitising:** strip `/`, control characters and trailing dots from all names.
+
+## 9. Web app
+
+- Python, single service under systemd, listening on port 8080 (configurable).
+- Mobile-first single page: large tap targets, readable on an iPhone in Safari, works as an Add to Home Screen web app (viewport and `apple-mobile-web-app-*` meta tags, icon).
+- Polls `/api/status` every 2 s (SSE is optional).
+- Shows: current stage and progress bar, disc title, drive state, last result, recent history, system health, and a **needs attention** card for each pending prompt with simple forms (film name; TV show, season, first episode with the proposed file list; title picker).
+- System health: SoC temperature (`vcgencmd measure_temp`), throttle/undervoltage flags (`vcgencmd get_throttled`, decoded), free space on `/srv/media`. Show a clear warning banner on undervoltage or throttling.
+
+Endpoints:
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/api/status` | State JSON plus system health |
+| GET | `/api/history` | Job history |
+| GET | `/api/log/<job-id>?lines=200` | Tail of a job log |
+| POST | `/api/eject` | Eject the disc (refused mid-rip unless forced) |
+| POST | `/api/cancel` | Cancel the current job (signal process group, clean up) |
+| POST | `/api/start` | Start a rip of the inserted disc (for when auto-start is disabled) |
+| POST | `/api/pending/<id>/answer` | Answer a prompt (film name, TV plan, or chosen titles); moves the rip into the library |
+| POST | `/api/pending/<id>/discard` | Delete a pending rip from `_inbox` |
+| GET | `/api/known-discs` | List remembered corrections |
+| DELETE | `/api/known-discs/<fingerprint>` | Forget a remembered correction |
+
+Auth and exposure:
+
+- LAN only, never port-forwarded. POST/DELETE endpoints require a shared token (in config, entered once in the UI and stored in the browser). Read-only status may be unauthenticated.
+- Remote access, if wanted later, via Tailscale or WireGuard, not by opening ports.
+
+## 10. Jellyfin and Samba
+
+- Jellyfin in Docker (official arm64 image), config and cache on the XS1000. Mount `/srv/media/Movies`, `/srv/media/TV` and `/srv/media/Music` read-only. Libraries: Movies, Shows, Music. `_inbox`, `_work` and `_unknown_music` are not libraries.
+- Expect direct play only. No hardware transcoding on the Pi 4. Raw DVD MPEG-2 may force transcoding on some clients (notably browsers), so test on the real devices.
+- Enable the "Allow media downloads" permission for the user(s) who need browser downloads.
+- Trigger a library scan after a successful move (Jellyfin API with an API key from config), or rely on the scheduled/real-time monitor. Decide in 11.
+- Samba shares `/srv/media` (read/write for one authenticated user, so renames and manual tagging work from a laptop). No guest write.
+
+## 11. Open decisions (resolve with the user before or during build)
+
+1. Default `--minlength` and the film/season duration thresholds in 7.1.1. Validate against a few real discs and tune.
+2. If a disc is inserted while busy: queue, or reject with a message?
+3. Auto-start on insert, or require a tap on `/api/start`? Default auto-start with a config switch.
+4. Jellyfin refresh: API call after move, or rely on its own scanning?
+5. TVmaze lookup on by default?
+6. Include DVD extras by default? (Proposed: no.)
+7. Hostname, web port, Samba username.
+8. Whether to keep a copy of the MakeMKV log with each rip.
+
+## 12. Build order
+
+1. Base OS: confirm USB boot, SSH, hostname, `get_throttled` clean under load, Docker, Samba, directory layout.
+2. MakeMKV arm64 install and a manual rip of one DVD by hand to prove the drive and key work.
+3. `dispatch` script, udev rule and systemd unit. Prove detection, classification and eject with logging only.
+4. State file writer and lock, used by all scripts.
+5. Video ripper: info scan, film path (tidy label, junk detection, rip, move), progress parsing.
+6. Season-disc classification, TV plan prompt, numbering, continuation, optional TVmaze names.
+7. Fingerprints, `known_discs.json`, duplicate handling.
+8. Audio ripper wrapper (abcde), output to `Music/`.
+9. Jellyfin container and libraries, then Samba.
+10. Web app: `/api/status` and page first, then controls, then prompts and pending answers.
+11. Thermal test with the 3D-printed case: rip while streaming for 20-30 min and watch temperature and throttle flags.
+
+## 13. Acceptance tests
+
+- Film DVD with a good label: rips unattended to `Movies/<Name>/<Name>.mkv`, ejects, appears in Jellyfin.
+- Film DVD with a junk label: rip completes and parks in `_inbox`; a prompt appears on the iPhone; answering moves it into `Movies/` with the chosen name.
+- Same disc re-inserted after a correction: no prompt, correct name.
+- Different disc of the same film (e.g. DVD then Blu-ray): second file gets a ` - DVD` / ` - Bluray` suffix, no overwrite.
+- TV season disc: all episodes ripped in disc order; the plan prompt appears; after confirming, files are named `Show - S01E0N - Title.mkv` under `TV/Show/Season 01/` and show up as episodes in Jellyfin.
+- Second disc of the same season: continues numbering with no question.
+- Ambiguous disc (many decoy titles): no automatic rip; title picker shown.
+- Insert an audio CD: FLAC files with correct tags appear in `Music/` and show up in Jellyfin.
+- Cancel mid-rip: partial output removed, state returns to idle, disc can be ejected.
+- Unreadable or scratched disc: job ends in `error` with a log, no partial files left, system stays responsive.
+- Power-cycle during a rip: on reboot, state is not stuck on `ripping` (stale job detected and marked `error`); pending items in `_inbox` are still listed.
+- Full disk threshold: rip is refused with a clear message.
+- Undervoltage or throttling: warning banner appears in the UI.
+
+## 14. Constraints and notes for the implementer
+
+- Keep dependencies small: Python stdlib plus Flask/FastAPI, no frontend build step.
+- Everything configurable lives in one config file; no hard-coded paths in scripts.
+- Scripts must be safe to re-run and must never delete anything outside `_work/` and `_inbox/`.
+- Prefer small, readable shell or Python over frameworks; the owner is an experienced engineer who wants to be able to debug it.
+- Reference for the naming behaviour: the Riparr project (https://github.com/jackharvest/riparr, `docs/guide/05-library-layout.md`). It is GPL-3.0, so implement the behaviour described here independently rather than copying its code, unless the intent is to make this project GPL too.
