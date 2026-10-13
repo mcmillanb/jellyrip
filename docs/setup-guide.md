@@ -251,7 +251,7 @@ How the pill behaves:
 
 - It only shows when there's something to see: a rip, questions waiting, a failed rip in the last 6 h, a missing drive, or under-voltage.
 - It works in the Jellyfin web client and in apps that wrap it (iOS and Android). Native TV apps don't run injected scripts, so they get the pop-up messages only.
-- If you later put Jellyfin behind **HTTPS** (a reverse proxy), the browser will block the pill, because it loads from plain `http://…:8080`. Serve the web app through the same proxy and change the snippet's URL.
+- If Jellyfin is ever switched to **HTTPS**, the browser will block the pill, because it loads from plain `http://…:8080`. The web app can serve HTTPS with the same certificate as Jellyfin (not built yet: it needs a cert and key setting for Flask). The snippet already follows Jellyfin's protocol, so it wouldn't need changing.
 - The pill finds Jellyfin's header by its layout, which can change between Jellyfin versions. If it ends up floating at the top centre instead of sitting in the header, `journalctl -u discrip-web | grep pill=` shows what it found.
 
 ### 11. Check it all works
