@@ -280,7 +280,7 @@ Auth and exposure:
 1. Default `--minlength` and the film/season duration thresholds in 7.1.1. Validate against a few real discs and tune. (Defaults set in step 5; still to validate against a real season disc.)
 2. If a disc is inserted while busy: queue, or reject with a message? **Decided 2026-10-13:** reject with a message (8.1).
 3. Auto-start on insert, or require a tap on `/api/start`? **Decided 2026-10-13:** auto-start, switchable with `[dispatch] auto_start`.
-4. Jellyfin refresh: API call after move, or rely on its own scanning?
+4. Jellyfin refresh: API call after move, or rely on its own scanning? **Decided 2026-10-13:** API call (`/Library/Refresh`) after every move; the folder watcher skips libraries that were empty at the last scan.
 5. TVmaze lookup on by default? Defaulted to on in step 6 (`[video] tv_lookup`); confirm with the user.
 6. Include DVD extras by default? (Proposed: no.)
 7. Hostname, web port, Samba username.
