@@ -3,7 +3,7 @@
 # Run as: sudo bash setup/01-base.sh   (safe to re-run)
 set -euo pipefail
 
-OWNER=jellyfin
+. "$(dirname "$0")/owner.sh"
 
 mountpoint -q /srv || { echo "/srv is not mounted: run setup/00-data-disk.sh first"; exit 1; }
 mountpoint -q /var/lib/discrip || { echo "/var/lib/discrip is not mounted: run setup/00-data-disk.sh first"; exit 1; }
@@ -19,8 +19,9 @@ apt-get install -y --no-install-recommends \
     samba \
     docker.io docker-cli
 
-echo "== docker group, data-root on /srv"
-usermod -aG docker "$OWNER"
+echo "== groups: docker, and cdrom for the drive"
+usermod -aG docker,cdrom "$OWNER"
+echo "== docker data-root on /srv"
 mkdir -p /etc/docker /etc/systemd/system/docker.service.d /srv/docker
 printf '{\n  "data-root": "/srv/docker"\n}\n' > /etc/docker/daemon.json
 printf '[Unit]\nRequiresMountsFor=/srv\n' > /etc/systemd/system/docker.service.d/10-srv.conf
@@ -47,8 +48,12 @@ else
     echo "WARNING: no /dev/sr0; check the DVD drive"
 fi
 
-echo "== bootloader EEPROM"
-rpi-eeprom-update -a
+if command -v rpi-eeprom-update >/dev/null && grep -qa "Raspberry Pi [45]" /proc/device-tree/model 2>/dev/null; then
+    echo "== bootloader EEPROM"
+    rpi-eeprom-update -a
+else
+    echo "== not a Pi 4 or 5: no bootloader EEPROM to update"
+fi
 
 echo
 echo "Done. Reboot to apply the EEPROM update and docker group membership."

@@ -4,7 +4,7 @@
 # container, keeps config). Web UI: http://jellyfin.local:8096
 set -euo pipefail
 
-OWNER=jellyfin
+. "$(dirname "$0")/owner.sh"
 TAG=${1:-12.2}
 IMAGE=jellyfin/jellyfin:$TAG
 

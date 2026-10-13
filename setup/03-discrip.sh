@@ -3,7 +3,7 @@
 # Run as: sudo bash setup/03-discrip.sh   (safe to re-run; config is kept if present)
 set -euo pipefail
 
-OWNER=jellyfin
+. "$(dirname "$0")/owner.sh"
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 DEST=/opt/discrip
 

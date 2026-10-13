@@ -5,7 +5,7 @@
 #   sudo smbpasswd -a jellyfin
 set -euo pipefail
 
-OWNER=jellyfin
+. "$(dirname "$0")/owner.sh"
 CONF=/etc/samba/smb.conf
 
 mountpoint -q /srv || { echo "/srv is not mounted: run setup/00-data-disk.sh first"; exit 1; }
@@ -22,9 +22,10 @@ cat > "$CONF" <<EOF
    logging = file
    panic action = /usr/share/samba/panic-action %d
 
-   # LAN only, authenticated only, no SMB1.
-   # IPv6 link-local (fe80::/10) never leaves the LAN; macOS prefers it for .local.
-   hosts allow = 127. ::1 192.168. fe80::/10
+   # Private addresses only, authenticated only, no SMB1. That covers any home
+   # network (10.x, 172.16-31.x, 192.168.x) without knowing which one this is.
+   # IPv6: link-local (fe80::/10), which macOS prefers for .local, and ULA (fd00::/8).
+   hosts allow = 127. ::1 10. 172.16.0.0/255.240.0.0 192.168. fe80::/10 fd00::/8
    map to guest = never
    server min protocol = SMB2_10
    # Setting a Samba password must not change the Linux login password.

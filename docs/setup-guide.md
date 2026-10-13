@@ -35,7 +35,7 @@ Use Raspberry Pi Imager and choose **Raspberry Pi OS Lite (64-bit)**. It must be
 In Imager's OS customisation settings, set:
 
 - **Hostname:** `jellyfin`. Any name works; the web app is then at `http://<hostname>.local:8080`.
-- **Username:** `jellyfin`, with a password. The setup scripts assume this user: see [Different user name](#different-user-name) to change it.
+- **Username:** any name; `jellyfin` is used in the examples below. discrip runs as the user who runs the setup scripts: see [Which user](#which-user).
 - **SSH:** enabled, ideally with your public key.
 - **Wi-Fi:** only if you won't use Ethernet. Ethernet is better for streaming.
 - **Locale and time zone:** your real time zone. The overnight encoding window uses local time.
@@ -223,7 +223,7 @@ The share is `smb://jellyfin.local/media`, covering the whole `/srv/media`. Use 
 
 On a Mac: Finder → Go → Connect to Server.
 
-It only accepts clients on `192.168.x.x` networks and IPv6 link-local. **If your home network uses `10.x` or `172.16-31.x`**, add it to `hosts allow` in `setup/09-samba.sh` and re-run the script.
+It accepts clients from any private address range (`10.x`, `172.16-31.x`, `192.168.x`, and IPv6 link-local and ULA), so it works on any home network without changes. It never accepts clients from the internet.
 
 ### 10. The Jellyfin header pill
 
@@ -323,18 +323,19 @@ The film and episode detection thresholds are in `[video]` in the config. If a t
 - **Pi 4 with 2 GB:** discrip itself is small, but Jellyfin and an ffmpeg encode together would be tight. Not recommended.
 - **Pi 3 or older:** too slow, and no 64-bit Jellyfin worth having.
 - **A non-Pi Debian 13 machine (x86 or arm64):**
-  - `01-base.sh` stops at `rpi-eeprom-update`; remove that line;
+  - `01-base.sh` skips the bootloader update when it isn't on a Pi 4 or 5;
   - the temperature and throttle readings use Pi-specific tools: temperature falls back to sysfs, and the throttle flags stay empty;
   - everything else, including the Docker image and the MakeMKV build, works on x86 too.
 
-### Different user name
+### Which user
 
-The scripts assume the Linux user `jellyfin`. To use another name:
+discrip runs as one Linux user, which also owns the library and is the Samba login. The setup scripts choose it in this order (`setup/owner.sh`):
 
-1. change `OWNER=jellyfin` at the top of `01-base.sh`, `03-discrip.sh`, `09-jellyfin.sh` and `09-samba.sh`;
-2. make sure that user is in the `cdrom` group, which Pi OS's first user is by default.
+1. `DISCRIP_USER`, if set: `sudo DISCRIP_USER=alice bash setup/01-base.sh`;
+2. the owner of `/srv/media`, once `01-base.sh` has created it, so every later script and re-run keeps the first choice;
+3. the user who ran `sudo`.
 
-The systemd units and the polkit rule take the user from `03-discrip.sh`.
+`01-base.sh` adds that user to the `cdrom` group (for the drive) and the `docker` group. The systemd units, polkit rule, Jellyfin container and Samba share all take the user from the scripts.
 
 ## Known gaps
 
