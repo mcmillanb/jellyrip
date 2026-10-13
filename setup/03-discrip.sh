@@ -19,6 +19,7 @@ else
     cp "$REPO/config/discrip.toml" "$DEST/discrip.toml"
 fi
 chown -R "$OWNER:$OWNER" "$DEST" /var/lib/discrip
+chmod 600 "$DEST/discrip.toml"  # may hold the Jellyfin API key
 
 echo "== /run/discrip"
 echo "d /run/discrip 0755 $OWNER $OWNER -" > /etc/tmpfiles.d/discrip.conf

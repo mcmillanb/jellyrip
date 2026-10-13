@@ -174,6 +174,7 @@ def file_film(cfg, job_id, label, disc_name, title, mkv, workdir):
     if dest:
         workdir.rmdir()
         log.info("moved to %s", dest)
+        library.jellyfin_refresh(cfg)
         return str(dest)
 
     inbox = park(cfg, workdir, job_id)

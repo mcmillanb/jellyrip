@@ -40,6 +40,10 @@ DEFAULTS = {
     "state": {
         "history_max": 50,
     },
+    "jellyfin": {
+        "url": "http://localhost:8096",
+        "api_key": "",             # Dashboard -> API Keys; empty disables refreshes
+    },
     "video": {
         "minlength": 600,          # seconds; shorter titles are ignored
         "film_min": 3600,          # a film's main title is at least this long

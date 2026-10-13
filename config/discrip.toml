@@ -23,6 +23,12 @@ rip_unit = "discrip-rip.service"
 eject_when_done = true
 min_free_gb = 25         # refuse to rip below this much free space in [paths] media
 
+[jellyfin]
+# Ask Jellyfin to rescan after every move into the library. Its folder watcher
+# skips library folders that were empty at the last scan, so it can't be relied on.
+url = "http://localhost:8096"
+api_key = ""               # Dashboard -> API Keys; empty disables refreshes
+
 [state]
 history_max = 50         # jobs kept in state.json history
 

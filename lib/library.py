@@ -37,6 +37,20 @@ def _remove_inbox(cfg, inbox):
         shutil.rmtree(inbox)
 
 
+def jellyfin_refresh(cfg):
+    """Ask Jellyfin to scan its libraries. Best effort: a failure is only logged."""
+    jf = cfg["jellyfin"]
+    if not jf["api_key"]:
+        return
+    req = urllib.request.Request(jf["url"].rstrip("/") + "/Library/Refresh", method="POST",
+                                 headers={"Authorization": f'MediaBrowser Token="{jf["api_key"]}"'})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            log.info("Jellyfin library refresh requested (HTTP %s)", r.status)
+    except OSError as e:
+        log.warning("Jellyfin library refresh failed: %s", e)
+
+
 # ---------------------------------------------------------------- films
 
 
@@ -69,6 +83,7 @@ def answer_name_film(cfg, pending_id, name):
     _remove_inbox(cfg, item["inbox_path"])
     discrip.resolve_pending(cfg, pending_id, str(dest))
     log.info("%s: filed as %s", pending_id, dest)
+    jellyfin_refresh(cfg)
     return dest
 
 
@@ -148,6 +163,7 @@ def apply_tv_plan(cfg, pending_id, show, season, first_episode, year=None, label
             "last_disc": disc if disc is not None else item.get("suggested", {}).get("disc"),
             "updated_at": discrip.now_iso(),
         }
+    jellyfin_refresh(cfg)
     return dests
 
 
