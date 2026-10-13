@@ -21,26 +21,67 @@
   pill.style.cssText = [
     "display:none", "align-items:center", "gap:6px", "margin:0 8px", "padding:4px 12px",
     "border-radius:999px", "font:600 13px/1.6 -apple-system,BlinkMacSystemFont,sans-serif",
-    "color:#fff", "text-decoration:none", "white-space:nowrap", "max-width:46vw",
+    "color:#fff", "text-decoration:none", "align-self:center", "white-space:nowrap", "max-width:46vw",
     "overflow:hidden", "text-overflow:ellipsis", "z-index:1000",
   ].join(";");
 
+  let version = null;  // pill_version from the first status; a change means reload
+  let timer = null;
+
+  // Where the pill went, reported to discrip as ?pill=... on status requests
+  // (shows in the discrip-web log, which helps when Jellyfin's layout changes).
+  let placement = "none";
+
+  const visible = (el) =>
+    el.getClientRects().length > 0 && getComputedStyle(el).visibility !== "hidden";
+
+  function visibleHeader() {
+    // Jellyfin 12: the visible header is an MUI AppBar whose toolbar holds a
+    // flex-grow box of buttons justified to flex-end (measured on 12.2). Older
+    // layouts: .headerRight. Hidden headers of other views stay in the page.
+    for (const bar of document.querySelectorAll(".MuiAppBar-root .MuiToolbar-root, .skinHeader .MuiToolbar-root")) {
+      if (!visible(bar)) continue;
+      const right = [...bar.children].find((el) =>
+        el.tagName === "DIV" && getComputedStyle(el).justifyContent === "flex-end");
+      if (right) return right;
+    }
+    return [...document.querySelectorAll(".headerRight")].find(visible);
+  }
+
+  function diag() {
+    // What the page offers, for fixing placement when Jellyfin's layout changes.
+    const n = (sel) => {
+      const all = [...document.querySelectorAll(sel)];
+      return all.length + "/" + all.filter(visible).length;
+    };
+    const bar = [...document.querySelectorAll(".MuiToolbar-root")].find(visible);
+    const kids = bar ? [...bar.children].map((el) => el.tagName.toLowerCase() + "." +
+      (el.className && el.className.baseVal === undefined ? String(el.className) : "")
+        .split(" ").filter((c) => !/^css-/.test(c)).slice(0, 2).join(".") + ":" +
+      getComputedStyle(el).justifyContent).join(",") : "-";
+    const barUp = bar ? (bar.parentElement.className || "").toString().split(" ").slice(0, 3).join(".") : "-";
+    return `skinHeader=${n(".skinHeader")} toolbar=${n(".MuiToolbar-root")} ` +
+           `headerRight=${n(".headerRight")} appbar=${n(".MuiAppBar-root")} barParent=${barUp} kids=${kids}`;
+  }
+
   function place() {
-    // Jellyfin's header buttons live in .headerRight; float until it exists.
-    const header = document.querySelector(".skinHeader .headerRight") ||
-                   document.querySelector(".headerRight");
+    const header = visibleHeader();
     if (header) {
       if (pill.parentElement !== header) {
         header.prepend(pill);
         pill.style.position = pill.style.top = pill.style.left = pill.style.transform = "";
       }
-    } else if (!pill.isConnected) {
-      document.body.append(pill);
+      placement = "header";
+    } else {
+      if (pill.parentElement !== document.body) document.body.append(pill);
       pill.style.position = "fixed";
       pill.style.top = "calc(8px + env(safe-area-inset-top))";
       pill.style.left = "50%";
       pill.style.transform = "translateX(-50%)";
+      placement = "float";
     }
+    const r = pill.getBoundingClientRect();
+    if (pill.style.display !== "none" && (r.width === 0 || r.height === 0)) placement += "-invisible";
   }
 
   function show(text, kind, title) {
@@ -51,14 +92,31 @@
     pill.style.display = "inline-flex";
   }
 
+  let retired = false;
+
   async function tick() {
-    if (document.hidden) return;
+    if (retired || document.hidden) return;
     let s;
     try {
-      const r = await fetch(BASE + "/api/status", { cache: "no-store" });
+      const r = await fetch(BASE + "/api/status?pill=" + placement +
+                            (placement === "float" ? "&dbg=" + encodeURIComponent(diag()) : ""),
+                            { cache: "no-store" });
       s = await r.json();
     } catch (e) {
       pill.style.display = "none"; // discrip unreachable: stay out of the way
+      return;
+    }
+    // A newer pill.js was installed: swap this one for it (no Jellyfin reload needed).
+    if (version === null) version = s.pill_version;
+    else if (s.pill_version !== version) {
+      retired = true;
+      clearInterval(timer);
+      observer.disconnect();
+      pill.remove();
+      window.__discripPill = false;
+      const next = document.createElement("script");
+      next.src = BASE + "/pill.js?v=" + s.pill_version;
+      document.head.appendChild(next);
       return;
     }
     const job = s.state.job, pending = s.state.pending || [], d = s.state.drive || {};
@@ -88,12 +146,13 @@
   // Jellyfin is a single-page app that redraws its header: re-place at most once
   // per frame after DOM changes.
   let queued = false;
-  new MutationObserver(() => {
+  const observer = new MutationObserver(() => {
     if (queued) return;
     queued = true;
     requestAnimationFrame(() => { queued = false; if (pill.style.display !== "none") place(); });
-  }).observe(document.body, { childList: true, subtree: true });
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
   tick();
-  setInterval(tick, 5000);
+  timer = setInterval(tick, 5000);
   document.addEventListener("visibilitychange", tick);
 })();

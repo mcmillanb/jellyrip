@@ -20,7 +20,7 @@ log = logging.getLogger("watcher")
 HEARTBEAT = 30  # seconds between state.json writes when nothing changes
 
 
-def start_rip(cfg):
+def start_rip(cfg, at_startup=False):
     unit = cfg["dispatch"]["rip_unit"]
     if not cfg["dispatch"]["auto_start"]:
         log.info("disc ready; auto_start is off, not starting %s", unit)
@@ -29,6 +29,10 @@ def start_rip(cfg):
     state = subprocess.run(["systemctl", "is-active", unit],
                            capture_output=True, text=True).stdout.strip()
     if state in ("active", "activating", "deactivating", "reloading"):
+        if at_startup:
+            # The watcher was restarted mid-rip: that rip is for this disc.
+            log.info("disc ready and %s already running (watcher restarted mid-rip)", unit)
+            return
         log.warning("disc ready but %s is already running; not starting another", unit)
         discrip.set_message(cfg, "A rip is already running; the new disc was not started.")
         return
@@ -104,7 +108,7 @@ def main():
         if changed:
             log.info("drive %s: %s -> %s", dev or "-", last or "start", status)
             if status == "ready":
-                start_rip(cfg)
+                start_rip(cfg, at_startup=last is None)
             last = status
 
         if changed or time.monotonic() - last_write >= HEARTBEAT:

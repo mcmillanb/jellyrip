@@ -125,6 +125,7 @@ def status():
     state = discrip.read_state(cfg)
     last = state.pop("history", [])[:1]
     return jsonify(state=state, last_job=last[0] if last else None, health=health(),
+                   pill_version=int((WEB / "pill.js").stat().st_mtime),
                    rip_unit=rip_unit_state(), auto_start=cfg["dispatch"]["auto_start"],
                    now=discrip.now_iso())
 
