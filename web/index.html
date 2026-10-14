@@ -91,6 +91,7 @@ pre { white-space: pre-wrap; word-break: break-all; font-size: 12px; line-height
 #temp-chart .grid-l { stroke: var(--line); stroke-width: 1; }
 #temp-chart .limit { stroke: var(--bad); stroke-width: 1; stroke-dasharray: 4 3; }
 #temp-chart .enc { fill: var(--accent); opacity: .14; }
+#temp-chart .hot { fill: var(--bad); opacity: .16; }
 #temp-chart .line { fill: none; stroke: var(--accent); stroke-width: 1.6; stroke-linejoin: round; }
 .empty { color: var(--muted); text-align: center; padding: 6px 0; }
 .toast { position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom));
@@ -451,7 +452,8 @@ function renderEncode(s) {
     const name = e.file.split("/").pop().replace(/\.mkv$/, "");
     $("#enc-title").textContent = (e.state === "paused" ? "Paused: " : "Encoding: ") + name;
     const eta = e.eta_hours != null && e.state === "encoding" ? ` · about ${e.eta_hours} h left` : "";
-    const heat = e.peak_c != null ? ` · CPU peak ${Math.round(e.peak_c)} °C` : "";
+    const heat = e.peak_c != null ? ` · CPU peak ${Math.round(e.peak_c)} °C` +
+      (e.heat_pause_min ? `, paused ${e.heat_pause_min} min for heat` : "") : "";
     $("#enc-sub").textContent = `${Math.round(e.percent)}% · ${codec}${eta}${heat}` +
       (e.state === "paused" ? ` · ${e.reason}` : "") + ` · ${left}`;
     bar.hidden = false;
@@ -460,7 +462,8 @@ function renderEncode(s) {
     $("#enc-title").textContent = e.state === "off" ? "Off" : left;
     const when = e.queue && e.reason ? ` · waiting: ${e.reason}` : "";
     const lastTxt = e.last ? ` · last: ${e.last.file.split("/").pop()} ${e.last.ok ? "✓ " : "✕ "}${e.last.message}` +
-      (e.last.peak_c != null ? ` (CPU peak ${Math.round(e.last.peak_c)} °C, average ${Math.round(e.last.avg_c)} °C)` : "") : "";
+      (e.last.peak_c != null ? ` (CPU peak ${Math.round(e.last.peak_c)} °C, average ${Math.round(e.last.avg_c)} °C` +
+        (e.last.heat_pause_min ? `, paused ${e.last.heat_pause_min} min for heat)` : ")") : "") : "";
     $("#enc-sub").textContent = `${codec} · ${e.window}${when}${lastTxt}`;
     bar.hidden = true;
   }
@@ -486,16 +489,18 @@ async function drawTemps() {
   let out = "";
   for (let c = lo; c <= hi; c += 10)
     out += `<line class="grid-l" x1="${L}" x2="${W - R}" y1="${y(c)}" y2="${y(c)}"/><text x="${L - 4}" y="${y(c) + 3}" text-anchor="end">${c}°</text>`;
-  // Encoding spans (a gap of over 3 minutes ends a span).
+  // Spans of encoding (blue) and of pauses for heat (red); a gap of over 3
+  // minutes or a change of state ends a span.
   let span = null;
   const spans = [];
   for (const p of samples) {
     const t = Date.parse(p.t);
-    if (p.state === "encoding") {
-      if (span && t - span[1] < 180e3) span[1] = t; else spans.push(span = [t, t]);
+    if (p.state === "encoding" || p.state === "hot") {
+      if (span && span[2] === p.state && t - span[1] < 180e3) span[1] = t;
+      else spans.push(span = [t, t, p.state]);
     } else span = null;
   }
-  for (const [a, b] of spans) out += `<rect class="enc" x="${x(a)}" y="${T}" width="${Math.max(x(b + 60e3) - x(a), 1)}" height="${H - T - B}"/>`;
+  for (const [a, b, st] of spans) out += `<rect class="${st === "hot" ? "hot" : "enc"}" x="${x(a)}" y="${T}" width="${Math.max(x(b + 60e3) - x(a), 1)}" height="${H - T - B}"/>`;
   out += `<line class="limit" x1="${L}" x2="${W - R}" y1="${y(max_temp)}" y2="${y(max_temp)}"/>`;
   // Line, broken where samples are missing (the Pi was off or the encoder stopped).
   let path = "", prev = null;
@@ -518,6 +523,7 @@ async function drawTemps() {
   $("#temp-sum").textContent = `Now ${cs[cs.length - 1]} °C` +
     (enc.length ? ` · encoding: peak ${Math.max(...enc)} °C, average ${avg(enc)} °C` : " · no encoding in this period") +
     (idle.length ? ` · idle average ${avg(idle)} °C` : "") +
+    (samples.some((p) => p.state === "hot") ? ` · paused about ${samples.filter((p) => p.state === "hot").length} min for heat (red)` : "") +
     ` · pauses at ${max_temp} °C` + (capped ? " · the Pi throttled itself in this period" : "");
 }
 $("#temp-d").ontoggle = drawTemps;

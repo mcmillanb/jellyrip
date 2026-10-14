@@ -4,8 +4,8 @@
 Every 15 s: work out whether encoding may run (switch, time window, no rip, no
 Jellyfin playback, CPU not hot); pause or resume the running ffmpeg to match,
 or start the next file. Publishes its status as "encode" in state.json.
-Logs the CPU temperature once a minute (encode.record_temp) and keeps the peak
-and average for each encode.
+Logs the CPU temperature once a minute (encode.record_temp; state "hot" while
+paused for heat) and keeps each encode's peak, average and minutes lost to heat.
 """
 import logging
 import shutil
@@ -39,10 +39,11 @@ def publish(cfg, status):
         state["encode"] = status
 
 
-def temp_summary(temps):
+def temp_summary(temps, hot_s):
     if not temps:
         return {}
-    return {"peak_c": round(max(temps), 1), "avg_c": round(sum(temps) / len(temps), 1)}
+    return {"peak_c": round(max(temps), 1), "avg_c": round(sum(temps) / len(temps), 1),
+            "heat_pause_min": round(hot_s / 60)}
 
 
 def main():
@@ -58,6 +59,7 @@ def main():
     job = None
     hot = False
     active_s = 0.0       # seconds the current job has actually run (not paused)
+    hot_s = 0.0          # seconds the current job has been paused for heat
     last_tick = time.monotonic()
     pending_count, indexed_at = 0, 0.0
     last_result = None
@@ -68,6 +70,8 @@ def main():
             now = time.monotonic()
             if job and not job.paused:
                 active_s += now - last_tick
+            elif job and hot:
+                hot_s += now - last_tick
             last_tick = now
 
             s = encode.settings(cfg)
@@ -86,10 +90,11 @@ def main():
                     log.error("encode of %s failed: %s (original kept)", rel, msg)
                     encode.mark(cfg, str(job.src), status="failed", error=msg)
                 last_result = {"file": rel, "ok": ok, "message": msg, "at": discrip.now_iso(),
-                               **temp_summary(job_temps)}
+                               **temp_summary(job_temps, hot_s)}
                 if job_temps:
-                    log.info("%s: CPU peaked at %.1f °C, averaged %.1f °C", rel,
-                             last_result["peak_c"], last_result["avg_c"])
+                    log.info("%s: CPU peaked at %.1f °C, averaged %.1f °C, paused %d min for heat",
+                             rel, last_result["peak_c"], last_result["avg_c"],
+                             last_result["heat_pause_min"])
                 job, indexed_at = None, 0.0
             elif job and reason == "turned off":
                 log.info("encoding turned off: stopping %s", job.src.name)
@@ -111,7 +116,7 @@ def main():
                 pending_count = len(todo)
                 if todo:
                     job = encode.Job(cfg, todo[0], s["codec"])
-                    active_s = 0.0
+                    active_s = hot_s = 0.0
                     job_temps = []
                     try:
                         job.start()
@@ -123,7 +128,7 @@ def main():
 
             if now - temp_at >= TEMP_EVERY:
                 temp_at = now
-                state = ("paused" if job.paused else "encoding") if job else "idle"
+                state = ("encoding" if not job.paused else "hot" if hot else "paused") if job else "idle"
                 t = encode.record_temp(cfg, state)
                 if t is not None and state == "encoding":
                     job_temps.append(t)
@@ -141,7 +146,7 @@ def main():
                 status.update(state="paused" if job.paused else "encoding",
                               file=str(job.src.relative_to(media)), percent=job.percent,
                               speed=round(job.done_s / active_s, 2) if active_s > 60 else None,
-                              eta_hours=eta, **temp_summary(job_temps))
+                              eta_hours=eta, **temp_summary(job_temps, hot_s))
             publish(cfg, status)
             time.sleep(TICK)
     except (Stop, KeyboardInterrupt):
