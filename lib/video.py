@@ -11,6 +11,7 @@ from pathlib import Path
 import discrip
 import library
 import makemkv
+import mkv
 import naming
 
 log = logging.getLogger("video")
@@ -143,6 +144,10 @@ def rip_title(cfg, dev, title, workdir, part=(0, 1)):
             files[0].rename(dest)
             dest.chmod(0o664)  # makemkvcon creates 0666 regardless of the umask
             out.rmdir()
+            try:
+                mkv.tidy_flags(dest)  # no default subtitles: they force a transcode
+            except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired) as e:
+                log.warning("could not fix track flags of %s: %s", dest.name, e)
             log.info("ripped title %d (%.2f GB)", title["index"], dest.stat().st_size / 1e9)
             return dest
         shutil.rmtree(out)

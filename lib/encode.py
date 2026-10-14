@@ -23,6 +23,7 @@ import urllib.request
 from pathlib import Path
 
 import discrip
+import mkv
 
 log = logging.getLogger("encode")
 
@@ -397,6 +398,11 @@ class Job:
                 # e.g. the disc was ripped again meanwhile: keep the new rip; it is
                 # queued again because its size and mtime changed.
                 return None, "the original changed while encoding; result discarded"
+            # The output is progressive (deinterlaced, or progressive to start with).
+            try:
+                mkv.tidy_flags(self.out, progressive=True)
+            except (RuntimeError, ValueError, subprocess.TimeoutExpired) as e:
+                return False, str(e)
             before, after = self.src.stat().st_size, self.out.stat().st_size
             os.chmod(self.out, 0o664)
             if keep_original:
