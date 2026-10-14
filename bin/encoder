@@ -42,7 +42,7 @@ def publish(cfg, status):
 def temp_summary(temps):
     if not temps:
         return {}
-    return {"peak_c": max(temps), "avg_c": round(sum(temps) / len(temps), 1)}
+    return {"peak_c": round(max(temps), 1), "avg_c": round(sum(temps) / len(temps), 1)}
 
 
 def main():
