@@ -49,6 +49,10 @@ max_temp = 75              # pause above this CPU temperature
 # rip. Pressing it also starts a halted Pi, but only on GPIO 3. 0 = no button.
 # Changes take effect after re-running setup/03-discrip.sh and rebooting.
 button_gpio = 3
+# The button's built-in LED: + on this GPIO, - on GND (header pins 11 and 9 for
+# GPIO 17). Lit while the Pi runs, slow flash while it shuts down, dark once it's
+# safe to unplug. 0 = no LED. Needs a reboot after re-running 03-discrip.sh.
+led_gpio = 17
 
 [leds]
 # Board LEDs kept off while discrip runs (names in /sys/class/leds). They come

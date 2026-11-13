@@ -65,6 +65,10 @@ DEFAULTS = {
         # Momentary button between this GPIO and GND: hold 5 s to shut down; a
         # press also starts a halted Pi, but only on GPIO 3 (header pins 5 and 6).
         "button_gpio": 3,          # 0: no button
+        # The button's built-in LED: + on this GPIO, - on GND (header pins 11 and 9
+        # for GPIO 17). Lit while running, slow flash while shutting down, dark
+        # once it's safe to unplug.
+        "led_gpio": 17,            # 0: no LED
     },
     "leds": {
         "off": ["ACT", "PWR"],     # board LEDs (/sys/class/leds) kept off while running

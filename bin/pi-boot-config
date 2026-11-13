@@ -4,6 +4,9 @@
 Run as root by setup/03-discrip.sh. From discrip.toml:
   [power] button_gpio   dtoverlay=gpio-shutdown: the button sends KEY_POWER, and
                         logind (50-discrip-button.conf) shuts down on a 5 s hold
+  [power] led_gpio      dtoverlay=gpio-led: the button's LED as /sys/class/leds/button,
+                        lit from early boot; the kernel turns it off at the very end
+                        of shutdown (bin/leds makes it flash before that)
   [leds] ethernet_off   dtparam=eth_led0/eth_led1=4 (off on a Pi 4 or 5)
 The block sits between "# BEGIN discrip" and "# END discrip" at the end of the
 file and is replaced on every run. Prints "reboot needed" when it changed.
@@ -19,6 +22,7 @@ import discrip  # noqa: E402
 CONFIG = Path("/boot/firmware/config.txt")
 BEGIN = "# BEGIN discrip (written by setup/03-discrip.sh from /opt/discrip/discrip.toml)"
 END = "# END discrip"
+BUTTON_LED = "button"  # /sys/class/leds/button; bin/leds uses the same name
 
 
 def block(cfg):
@@ -26,6 +30,9 @@ def block(cfg):
     gpio = int(cfg["power"]["button_gpio"])
     if gpio:
         lines.append(f"dtoverlay=gpio-shutdown,gpio_pin={gpio}")
+    led = int(cfg["power"].get("led_gpio", 0))
+    if led:
+        lines.append(f"dtoverlay=gpio-led,gpio={led},label={BUTTON_LED},trigger=default-on")
     if cfg["leds"]["ethernet_off"]:
         lines += ["dtparam=eth_led0=4", "dtparam=eth_led1=4"]
     if not lines:

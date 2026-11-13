@@ -274,6 +274,21 @@ The overlay needs one reboot after the first install. Wire the button with the P
 - **pin 4, right next to pin 6, is 5 V**, and touching it to pin 5 can destroy the GPIO;
 - GPIO 3 is also the I2C clock, so leave I2C off (the default).
 
+**The button's LED** (for a button with a built-in LED; `[power] led_gpio`, 0 for none): wire LED **+ to GPIO 17, pin 11** and LED **− to GND, pin 9**. These are the two inner-row pins just past the button's pin 5. The LED is:
+
+- **steady** while the Pi is running (from a few seconds into boot);
+- **slowly flashing** while it shuts down, starting as soon as the 5 s hold, the web app or `poweroff` begins the shutdown;
+- **off** once shutdown has finished. Then it's safe to unplug. A reboot flashes, goes dark, then lights again.
+
+A GPIO pin gives 3.3 V and only a few mA, so check the LED's rating. A "3 V"–"6 V" button LED works directly; put a 100–220 Ω resistor in series if it's a bare LED with no resistor of its own. A "12 V" or "24 V" one has a large built-in resistor and will be dim or dark at 3.3 V. Don't wire it to the 5 V pins: those stay live while the Pi is shut down.
+
+| Wire | Header pin | Pi signal |
+|---|---|---|
+| Switch | 5 | GPIO 3 |
+| Switch | 6 | GND |
+| LED + | 11 | GPIO 17 |
+| LED − | 9 | GND |
+
 **The web app** has the same controls under More → Power: *Shut down* and *Restart*. If a disc is ripping it asks again first, because the rip will be cancelled.
 
 **The LEDs:** the red power LED and the green activity LED are turned off at boot by `discrip-leds.service`. **They come back on while the Pi shuts down**, so the case stays dark normally, and when you shut down you can see when it's done: **unplug once the green light stops flickering.**
@@ -367,7 +382,7 @@ discrip runs as one Linux user, which also owns the library and is the Samba log
 
 ## Known gaps
 
-- **Power button:** the overlay and the 5 s hold are set up, but haven't been tried with a real button yet.
+- **Power button:** the overlay, the 5 s hold and the button LED are set up, but haven't been tried with a real button yet. The LED was checked on GPIO 17 with nothing connected (steady, then flashing at shutdown).
 - **Thermal test:** the build has not been thermally tested in its final case (spec step 11). Use the temperature chart during a rip plus a stream, and during an overnight encode.
 - **Untested paths:** not yet seen on real discs:
   - the junk-label `_inbox` path;

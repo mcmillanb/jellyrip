@@ -6,6 +6,11 @@ service stops at shutdown or reboot. With the LEDs dark in normal use, their
 coming back on shows the Pi is shutting down: once the green ACT light stops
 flickering it is safe to unplug. Which LEDs: [leds] off in discrip.toml.
 
+The power button's own LED ([power] led_gpio, /sys/class/leds/button from the
+gpio-led overlay) works the other way round: steady while running, a slow flash
+from "leds on" at shutdown, and dark once the kernel has finished shutting down
+(leds-gpio turns it off as its last step), which is when it's safe to unplug.
+
 Usage: leds off | leds on
 """
 import json
@@ -20,6 +25,8 @@ log = logging.getLogger("leds")
 LEDS = Path("/sys/class/leds")
 # Triggers to restore if the ones saved by "leds off" are lost (Pi 4 defaults).
 DEFAULT_TRIGGER = {"ACT": "mmc0", "PWR": "default-on"}
+BUTTON = LEDS / "button"  # label set by bin/pi-boot-config
+FLASH_MS = 600            # shutdown flash: this long on, this long off
 
 
 def trigger(led):
@@ -50,7 +57,17 @@ def main():
             (led / "brightness").write_text("0")
             log.info("%s off (was %s)", name, current)
         saved_path.write_text(json.dumps(saved))
+        if BUTTON.exists():
+            (BUTTON / "trigger").write_text("default-on")  # steady, e.g. after a cancelled stop
+            log.info("button LED steady")
     else:
+        if BUTTON.exists():
+            # The timer trigger flashes in the kernel, so it keeps going after
+            # this script and every other process has gone.
+            (BUTTON / "trigger").write_text("timer")
+            (BUTTON / "delay_on").write_text(str(FLASH_MS))
+            (BUTTON / "delay_off").write_text(str(FLASH_MS))
+            log.info("button LED flashing")
         try:
             saved = json.loads(saved_path.read_text())
         except (FileNotFoundError, json.JSONDecodeError):
