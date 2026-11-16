@@ -57,7 +57,7 @@ journalctl -u fanctl     changes in fan speed, with the temperature
 Edit `/etc/fanctl.conf`, then run `sudo systemctl restart fanctl`.
 
 ```
-curve = 45:30 55:50 65:75 70:100   # temperature C : fan %, linear in between
+curve = 45:20 55:30 65:40 72:50 75:100   # temperature C : fan %, linear in between
 stop_below = 42                    # once running, the fan only stops below this
 ```
 
