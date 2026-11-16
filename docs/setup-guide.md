@@ -382,7 +382,6 @@ discrip runs as one Linux user, which also owns the library and is the Samba log
 
 ## Known gaps
 
-- **Power button:** the overlay, the 5 s hold and the button LED are set up, but haven't been tried with a real button yet. The LED was checked on GPIO 17 with nothing connected (steady, then flashing at shutdown).
 - **Thermal test:** the build has not been thermally tested in its final case (spec step 11). Use the temperature chart during a rip plus a stream, and during an overnight encode.
 - **Untested paths:** not yet seen on real discs:
   - the junk-label `_inbox` path;
