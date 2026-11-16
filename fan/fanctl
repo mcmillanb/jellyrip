@@ -1,0 +1,333 @@
+#!/usr/bin/env python3
+"""fanctl: temperature-controlled PWM fan on the Pi's hardware PWM (sysfs).
+
+Usage:
+  fanctl status          temperature, fan %, mode
+  fanctl test [secs]     step 100/75/50/30/0/100 % so you can check by ear
+  fanctl set <percent>   manual fan speed until "fanctl auto"
+  fanctl auto            back to the temperature curve
+  fanctl daemon          the control loop (run by fanctl.service)
+  fanctl failsafe        fan to full speed (run when the service stops)
+
+All percentages are FAN speed. With invert = yes (an NPN transistor pulling the
+fan's PWM line low) the GPIO duty is 100 - fan %, so a low or idle pin means
+full speed: that is the fail-safe, and anything that goes wrong ends there.
+Settings: /etc/fanctl.conf. Wiring and curve notes: README.md next to the source.
+"""
+import configparser
+import json
+import os
+import signal
+import sys
+import time
+from pathlib import Path
+
+CONF = Path(os.environ.get("FANCTL_CONF", "/etc/fanctl.conf"))
+RUN = Path("/run/fanctl")
+OVERRIDE = RUN / "override"   # "auto" or a fan %, written by set/auto/test
+STATUS = RUN / "status.json"  # written by the daemon every tick
+PWM_ROOT = Path("/sys/class/pwm")
+TEMP = Path("/sys/class/thermal/thermal_zone0/temp")
+
+
+def log(msg):
+    print(msg, flush=True)
+
+
+# --- config -----------------------------------------------------------------
+
+def load_config():
+    cp = configparser.ConfigParser(inline_comment_prefixes=("#", ";"))
+    cp.read_dict({
+        "pwm": {"chip": "auto", "channel": "0", "gpio": "18",
+                "frequency": "25000", "invert": "yes"},
+        "control": {"interval": "5", "curve": "45:30 55:50 65:75 70:100",
+                    "stop_below": "42", "kick_percent": "50", "kick_seconds": "2",
+                    "max_step": "10"},
+    })
+    if CONF.exists():
+        cp.read(CONF)
+    p, c = cp["pwm"], cp["control"]
+    curve = []
+    for point in c["curve"].replace(",", " ").split():
+        t, pct = point.split(":")
+        curve.append((float(t), float(pct)))
+    curve.sort()
+    if not curve:
+        raise SystemExit(f"{CONF}: curve is empty")
+    return {
+        "chip": p["chip"].strip(), "channel": p.getint("channel"), "gpio": p.getint("gpio"),
+        "frequency": p.getint("frequency"), "invert": p.getboolean("invert"),
+        "interval": c.getfloat("interval"), "curve": curve,
+        "stop_below": c.getfloat("stop_below"), "kick_percent": c.getfloat("kick_percent"),
+        "kick_seconds": c.getfloat("kick_seconds"), "max_step": c.getfloat("max_step"),
+    }
+
+
+# --- hardware ---------------------------------------------------------------
+
+def read_temp():
+    return int(TEMP.read_text()) / 1000
+
+
+def find_chip(cfg):
+    """The pwmchip directory: a number from the config, or "auto" = PWM0.
+
+    PWM0 is fe20c000.pwm on a Pi 4 (7e20c000 in the bus addresses the docs use);
+    the headphone jack's PWM1 is ...20c800.
+    """
+    if cfg["chip"] != "auto":
+        return PWM_ROOT / f"pwmchip{int(cfg['chip'])}"
+    for chip in sorted(PWM_ROOT.glob("pwmchip*")):
+        if os.path.realpath(chip / "device").endswith("20c000.pwm"):
+            return chip
+    return None
+
+
+class Pwm:
+    def __init__(self, cfg, wait=0):
+        self.cfg = cfg
+        self.period = round(1e9 / cfg["frequency"])
+        deadline = time.monotonic() + wait
+        while True:
+            chip = find_chip(cfg)
+            if chip and chip.exists():
+                break
+            if time.monotonic() >= deadline:
+                raise RuntimeError("no PWM chip for GPIO %d: is dtoverlay=pwm,pin=18,func=2 loaded?"
+                                   % cfg["gpio"])
+            time.sleep(1)
+        self.dir = chip / f"pwm{cfg['channel']}"
+        if not self.dir.exists():
+            (chip / "export").write_text(str(cfg["channel"]))
+            for _ in range(50):  # udev sets the attribute permissions shortly after
+                if (self.dir / "enable").exists():
+                    break
+                time.sleep(0.1)
+        # Duty first (0 = pin low = full fan speed when inverted), so the period
+        # can always be set even if an old duty was longer than it.
+        self._write("duty_cycle", 0)
+        self._write("period", self.period)
+        self._write("enable", 1)
+        self.fan = None
+
+    def _write(self, name, value):
+        (self.dir / name).write_text(str(value))
+
+    def set_fan(self, pct):
+        pct = max(0.0, min(100.0, pct))
+        gpio_pct = 100 - pct if self.cfg["invert"] else pct
+        self._write("duty_cycle", round(self.period * gpio_pct / 100))
+        self.fan = pct
+
+    def failsafe(self):
+        """Full speed: GPIO duty 0 with invert (pin held low)."""
+        self._write("duty_cycle", 0 if self.cfg["invert"] else self.period)
+        self._write("enable", 1)
+        self.fan = 100.0
+
+
+# --- control ----------------------------------------------------------------
+
+def curve_percent(curve, temp):
+    """Fan % from the curve, linear between points; 0 below the first point."""
+    if temp < curve[0][0]:
+        return 0.0
+    for (t0, p0), (t1, p1) in zip(curve, curve[1:]):
+        if temp < t1:
+            return p0 + (p1 - p0) * (temp - t0) / (t1 - t0)
+    return curve[-1][1]
+
+
+def auto_target(cfg, temp, running):
+    target = curve_percent(cfg["curve"], temp)
+    if target == 0 and running and temp >= cfg["stop_below"]:
+        target = cfg["curve"][0][1]  # hysteresis: keep the lowest step until stop_below
+    return target
+
+
+def read_override():
+    try:
+        text = OVERRIDE.read_text().strip()
+    except FileNotFoundError:
+        return None
+    if text == "auto" or not text:
+        return None
+    return max(0.0, min(100.0, float(text)))
+
+
+def daemon():
+    cfg = load_config()
+    pwm = None
+
+    def stop(signum, _frame):
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    RUN.mkdir(exist_ok=True)
+    try:
+        pwm = Pwm(cfg, wait=60)
+        pwm.failsafe()
+        log(f"started: {pwm.dir}, {cfg['frequency']} Hz, invert={cfg['invert']}, "
+            f"curve {' '.join(f'{t:g}C:{p:g}%' for t, p in cfg['curve'])}, "
+            f"stop below {cfg['stop_below']:g}C")
+        mode, logged, next_auto, override_mtime = None, None, 0.0, None
+        while True:
+            try:
+                mtime = OVERRIDE.stat().st_mtime
+            except FileNotFoundError:
+                mtime = None
+            now = time.monotonic()
+            if mtime == override_mtime and now < next_auto:
+                time.sleep(0.5)
+                continue
+            override_mtime = mtime
+            manual = read_override()
+            new_mode = "auto" if manual is None else "manual"
+            try:
+                temp = read_temp()
+            except (OSError, ValueError) as e:
+                log(f"can't read the temperature ({e}): fan to 100%")
+                temp = None
+            if temp is None:
+                target = 100.0
+            elif manual is not None:
+                target = manual
+            else:
+                target = auto_target(cfg, temp, bool(pwm.fan))
+            current = pwm.fan or 0.0
+            if target == 0:
+                new = 0.0
+            elif current == 0:
+                if target < cfg["kick_percent"]:
+                    pwm.set_fan(cfg["kick_percent"])  # start cleanly from stopped
+                    time.sleep(cfg["kick_seconds"])
+                new = target
+            elif new_mode == "manual" or temp is None:
+                new = target  # manual settings and failures apply at once
+            else:
+                step = cfg["max_step"]
+                new = max(current - step, min(current + step, target))
+            pwm.set_fan(new)
+            if new_mode != mode:
+                log(f"mode {new_mode}" + (f" ({manual:g}%)" if manual is not None else ""))
+                mode = new_mode
+            shown = round(new)
+            if shown != logged:
+                log(f"{temp:.1f}C: fan {shown}%" if temp is not None else f"fan {shown}%")
+                logged = shown
+            STATUS.write_text(json.dumps({
+                "temp": temp, "fan": round(new, 1), "target": round(target, 1),
+                "mode": mode, "time": time.time(), "pid": os.getpid()}))
+            next_auto = time.monotonic() + cfg["interval"]
+    finally:
+        try:
+            (pwm or Pwm(cfg)).failsafe()
+            log("stopped: fan to 100%")
+        except Exception as e:  # the pin is low or idle anyway: still full speed
+            log(f"stopped; failsafe write failed ({e})")
+        STATUS.unlink(missing_ok=True)
+
+
+# --- CLI ----------------------------------------------------------------------
+
+def daemon_status():
+    """The daemon's last status if it's alive and recent, else None."""
+    try:
+        st = json.loads(STATUS.read_text())
+        os.kill(st["pid"], 0)
+    except (FileNotFoundError, ValueError, KeyError, ProcessLookupError):
+        return None
+    except PermissionError:
+        pass  # alive, owned by root
+    return st if time.time() - st["time"] < 30 else None
+
+
+def write_override(value):
+    try:
+        OVERRIDE.write_text(f"{value}\n")
+    except PermissionError:
+        raise SystemExit("needs root: sudo fanctl ...")
+    except FileNotFoundError:
+        raise SystemExit("fanctl.service isn't running (systemctl status fanctl)")
+
+
+def describe(pct):
+    if pct <= 0:
+        return "STOPPED"
+    if pct >= 100:
+        return "FULL speed"
+    return f"{pct:g}% (quieter than full)"
+
+
+def cmd_status():
+    cfg = load_config()
+    temp = read_temp()
+    st = daemon_status()
+    print(f"temperature  {temp:.1f} C")
+    if st:
+        print(f"fan          {st['fan']:g}%  ({describe(st['fan'])})")
+        print(f"mode         {st['mode']}" + ("" if st["mode"] == "auto"
+                                              else "  (sudo fanctl auto to go back)"))
+        if st["mode"] == "auto":
+            print(f"curve        {curve_percent(cfg['curve'], temp):.0f}% at this temperature, "
+                  f"stops below {cfg['stop_below']:g} C")
+    else:
+        print("fan          100% (service not running: the pin is idle, which is full speed)")
+        print("mode         none")
+
+
+def cmd_test(secs):
+    steps = [100, 75, 50, 30, 0, 100]
+    st = daemon_status()
+    if st:
+        previous = OVERRIDE.read_text().strip() if OVERRIDE.exists() else "auto"
+        apply = write_override
+    else:
+        print("(service not running: driving the PWM directly)")
+        pwm = Pwm(load_config())
+        apply = pwm.set_fan
+    try:
+        for pct in steps:
+            apply(pct)
+            print(f"fan {pct:3d}%  -> should be {describe(pct)}", flush=True)
+            time.sleep(secs)
+    finally:
+        if st:
+            write_override(previous)
+            print(f"back to {previous if previous == 'auto' else previous + '%'}")
+        else:
+            pwm.failsafe()
+            print("left at 100% (start the service for automatic control)")
+
+
+def main():
+    args = sys.argv[1:]
+    cmd = args[0] if args else "status"
+    if cmd == "daemon":
+        daemon()
+    elif cmd == "status":
+        cmd_status()
+    elif cmd == "test":
+        cmd_test(float(args[1]) if len(args) > 1 else 5)
+    elif cmd == "set" and len(args) == 2:
+        pct = float(args[1])
+        if not 0 <= pct <= 100:
+            raise SystemExit("percent must be 0-100")
+        write_override(f"{pct:g}")
+        print(f"fan set to {pct:g}% ({describe(pct)}) until: sudo fanctl auto")
+    elif cmd == "auto":
+        write_override("auto")
+        print("automatic (temperature curve)")
+    elif cmd == "failsafe":
+        try:
+            Pwm(load_config()).failsafe()
+        except RuntimeError:
+            pass  # no PWM: the pin is idle, so the fan is already at full speed
+    else:
+        raise SystemExit(__doc__.split("Usage:\n")[1].split("\n\n")[0])
+
+
+if __name__ == "__main__":
+    main()

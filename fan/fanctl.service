@@ -1,0 +1,21 @@
+[Unit]
+Description=fanctl: temperature-controlled PWM fan (GPIO 18)
+Documentation=file:///usr/local/share/doc/fanctl/README.md
+# Early: before most services, only needs /sys and the PWM module.
+DefaultDependencies=no
+After=local-fs.target systemd-udevd.service
+Before=basic.target shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/fanctl daemon
+# Also after a crash or kill: put the fan back to full speed.
+ExecStopPost=/usr/local/bin/fanctl failsafe
+Restart=always
+RestartSec=2
+RuntimeDirectory=fanctl
+RuntimeDirectoryPreserve=restart
+
+[Install]
+WantedBy=sysinit.target
