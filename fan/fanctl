@@ -258,7 +258,7 @@ def describe(pct):
         return "STOPPED"
     if pct >= 100:
         return "FULL speed"
-    return f"{pct:g}% (quieter than full)"
+    return "slower than full"
 
 
 def cmd_status():
