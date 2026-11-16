@@ -35,7 +35,16 @@ means **full speed**:
 
 - before the service starts;
 - after it stops or crashes (`ExecStopPost` runs `fanctl failsafe`);
-- after the Pi shuts down.
+- during shutdown, from when the service stops until the very end.
+
+**While the Pi is shut down** the fan is held **stopped**. The fan has its own
+12 V supply, and a halted Pi 4 keeps its 3.3 V rail and holds its GPIO outputs, so
+the last step of shutdown (`/usr/lib/systemd/system-shutdown/fanctl`, from
+`fan/fanctl-halt`) sets GPIO 18 to a plain output held high. Pressing the button
+to start the Pi resets the pins, so the fan runs at full speed until fanctl takes
+over a few seconds into boot. If the Pi loses power completely, the pin floats,
+the 10 kΩ resistor turns the transistor off, and the fan runs at full speed.
+`stop_when_off = no` in `/etc/fanctl.conf` turns this off.
 
 **Power button:** a momentary button between GPIO 3 (pin 5) and GND (pin 6).
 Hold it 5 s to shut down; press it to start a halted Pi. This is set up by

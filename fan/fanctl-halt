@@ -1,0 +1,24 @@
+#!/bin/sh
+# Installed by setup/10-fan.sh as /usr/lib/systemd/system-shutdown/fanctl.
+# systemd runs this at the very end of shutdown, after every service has stopped,
+# with $1 = halt, poweroff, reboot or kexec.
+#
+# A halted Pi 4 keeps its 3.3 V rail and holds its GPIO outputs, while the fan
+# has its own 12 V supply. Left alone, the PWM pin ends up low, which with the
+# inverting transistor is full speed. So on halt/poweroff, hold the pin at
+# the level for "stopped" instead. Pressing the button to start the Pi again
+# resets the pins, and the fan goes to full speed until fanctl takes over.
+# Turn off with "stop_when_off = no" in /etc/fanctl.conf.
+case "$1" in
+    halt|poweroff) ;;
+    *) exit 0 ;;
+esac
+CONF=/etc/fanctl.conf
+setting() {  # setting <name> <default>: a value from fanctl.conf, comments stripped
+    v=$(sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*\([^#;[:space:]]*\).*/\1/p" "$CONF" 2>/dev/null | tail -1)
+    echo "${v:-$2}"
+}
+[ "$(setting stop_when_off yes)" = "yes" ] || exit 0
+gpio=$(setting gpio 18)
+if [ "$(setting invert yes)" = "yes" ]; then level=dh; else level=dl; fi
+pinctrl set "$gpio" op "$level"

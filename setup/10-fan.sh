@@ -16,6 +16,7 @@ else
     install -m 644 "$REPO/fan/fanctl.conf" /etc/fanctl.conf
 fi
 install -m 644 "$REPO/fan/fanctl.service" /etc/systemd/system/fanctl.service
+install -D -m 755 "$REPO/fan/fanctl-halt" /usr/lib/systemd/system-shutdown/fanctl
 install -D -m 644 "$REPO/fan/README.md" /usr/local/share/doc/fanctl/README.md
 
 echo "== boot config ($CONFIG)"
