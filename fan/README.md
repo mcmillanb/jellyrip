@@ -57,9 +57,14 @@ journalctl -u fanctl     changes in fan speed, with the temperature
 Edit `/etc/fanctl.conf`, then run `sudo systemctl restart fanctl`.
 
 ```
-curve = 45:20 55:30 65:40 72:50 75:100   # temperature C : fan %, linear in between
+curve = 0:20 45:20 55:30 65:40 72:50 75:100   # temperature C : fan %, linear in between
 stop_below = 42                    # once running, the fan only stops below this
 ```
+
+The `0:20` point keeps the fan running at 20 %, which is silent, however cool the Pi
+is. With the curve starting at 45 °C the fan stopped below 42 °C, and at idle (about
+43 °C in the case) it started and stopped every 2 minutes. To let it stop again,
+remove `0:20`.
 
 - **Below the first point:** the fan stops, but once it's running it keeps the
   lowest step until the temperature drops below `stop_below`.

@@ -173,6 +173,7 @@ def daemon():
             f"curve {' '.join(f'{t:g}C:{p:g}%' for t, p in cfg['curve'])}, "
             f"stop below {cfg['stop_below']:g}C")
         mode, logged, next_auto, override_mtime = None, None, 0.0, None
+        first = True  # the first reading goes straight to the curve, not a slow ramp
         while True:
             try:
                 mtime = OVERRIDE.stat().st_mtime
@@ -204,12 +205,13 @@ def daemon():
                     pwm.set_fan(cfg["kick_percent"])  # start cleanly from stopped
                     time.sleep(cfg["kick_seconds"])
                 new = target
-            elif new_mode == "manual" or temp is None:
-                new = target  # manual settings and failures apply at once
+            elif first or new_mode == "manual" or temp is None:
+                new = target  # start-up, manual settings and failures apply at once
             else:
                 step = cfg["max_step"]
                 new = max(current - step, min(current + step, target))
             pwm.set_fan(new)
+            first = False
             if new_mode != mode:
                 log(f"mode {new_mode}" + (f" ({manual:g}%)" if manual is not None else ""))
                 mode = new_mode
@@ -271,8 +273,10 @@ def cmd_status():
         print(f"mode         {st['mode']}" + ("" if st["mode"] == "auto"
                                               else "  (sudo fanctl auto to go back)"))
         if st["mode"] == "auto":
-            print(f"curve        {curve_percent(cfg['curve'], temp):.0f}% at this temperature, "
-                  f"stops below {cfg['stop_below']:g} C")
+            lowest_t, lowest_p = cfg["curve"][0]
+            stops = (f"never stops (at least {lowest_p:g}%)" if lowest_t <= 0
+                     else f"stops below {cfg['stop_below']:g} C")
+            print(f"curve        {curve_percent(cfg['curve'], temp):.0f}% at this temperature, {stops}")
     else:
         print("fan          100% (service not running: the pin is idle, which is full speed)")
         print("mode         none")
