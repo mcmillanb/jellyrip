@@ -192,3 +192,58 @@ def _match(cfg, key, query, disc_s, year):
     log.info("TMDb: %r -> %s (id %s, %s min)", query, match["folder"], d["id"],
              d.get("runtime"))
     return match
+
+
+# ---------------------------------------------------------------- choosing by hand
+
+POSTER = "https://image.tmdb.org/t/p/w92"
+SEARCH_MAX = 8
+
+
+def _film(d):
+    """TMDb movie details -> what the rest of discrip files a film by."""
+    yr = (d.get("release_date") or "")[:4]
+    name = f"{folder_safe(d['title'])} ({yr})" if yr else folder_safe(d["title"])
+    return {"id": d["id"], "title": d["title"], "year": yr or None,
+            "runtime": d.get("runtime"), "name": name, "folder": f"{name} [tmdbid-{d['id']}]"}
+
+
+def search_films(cfg, query, disc_s=None):
+    """Candidates for the web app's Look up: up to SEARCH_MAX films for `query`,
+    those whose running time fits the disc first. Each is _film() plus overview,
+    poster (URL or None), popularity and fits. Raises TmdbError (no key, refused,
+    unreachable)."""
+    key, _ = get_key(cfg)
+    if not key:
+        raise TmdbError("no TMDb key: add one under Settings → Film details")
+    lang = cfg.get("tmdb", {}).get("language", "en-GB")
+    results = []
+    for q in dict.fromkeys([query.strip(), search_phrase(query)]):
+        if q:
+            results = _get(key, "/search/movie", {"query": q, "include_adult": "false",
+                                                  "language": lang}).get("results", [])
+            if results:
+                break
+    out = []
+    for r in results[:SEARCH_MAX]:
+        try:
+            d = _get(key, f"/movie/{r['id']}", {"language": lang})
+        except TmdbError:
+            d = r
+        f = _film(d)
+        f.update(overview=(d.get("overview") or "")[:240],
+                 poster=POSTER + d["poster_path"] if d.get("poster_path") else None,
+                 popularity=r.get("popularity") or 0,
+                 fits=bool(disc_s) and runtime_ok(d.get("runtime"), disc_s))
+        out.append(f)
+    out.sort(key=lambda f: (not f["fits"], -f["popularity"]))
+    return out
+
+
+def film_by_id(cfg, tmdb_id):
+    """The film with this TMDb id, as _film(). Raises TmdbError."""
+    key, _ = get_key(cfg)
+    if not key:
+        raise TmdbError("no TMDb key")
+    lang = cfg.get("tmdb", {}).get("language", "en-GB")
+    return _film(_get(key, f"/movie/{int(tmdb_id)}", {"language": lang}))

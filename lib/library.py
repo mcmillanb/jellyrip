@@ -214,16 +214,25 @@ def place_film(cfg, src, name, fp=None, folder=None):
     return None
 
 
-def answer_name_film(cfg, pending_id, name):
+def answer_name_film(cfg, pending_id, name, tmdb_id=None):
+    """File the parked film as `name`, or as TMDb film tmdb_id if one was picked
+    from the web app's Look up (then name is ignored)."""
     item = discrip.get_pending(cfg, pending_id)
     if not item or item["prompt"] != "name_film":
         raise PlanError(f"no name_film prompt {pending_id}")
-    name = naming.sanitise(name)
-    if not name:
-        raise PlanError("empty name")
     fp = item.get("fingerprint")
     folder = None
-    match = tmdb.match_film(cfg, name, item["titles"][0].get("duration_s"))
+    if tmdb_id:
+        try:
+            match = tmdb.film_by_id(cfg, tmdb_id)
+        except (tmdb.TmdbError, ValueError) as e:
+            raise PlanError(f"couldn't get that film from TMDb: {e}") from None
+        name = match["name"]
+    else:
+        name = naming.sanitise(name)
+        if not name:
+            raise PlanError("empty name")
+        match = tmdb.match_film(cfg, name, item["titles"][0].get("duration_s"))
     if match:
         name, folder = match["name"], match["folder"]
     dest = place_film(cfg, Path(item["titles"][0]["file"]), name, fp, folder)

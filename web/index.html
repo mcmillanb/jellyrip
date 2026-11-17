@@ -81,6 +81,13 @@ input[type=text], input[type=number], input[type=password], input[type=time] {
         border-top: 1px solid var(--line); cursor: pointer; }
 .hist:first-child { border-top: none; }
 .hdet { padding: 0 0 10px; }
+.cands { margin-top: 8px; }
+.cand { display: flex; gap: 10px; padding: 8px; border: 1px solid transparent; border-radius: 10px; cursor: pointer; }
+.cand + .cand { margin-top: 4px; }
+.cand.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--card)); }
+.cand img, .cand .noposter { width: 46px; height: 69px; border-radius: 4px; object-fit: cover; flex: none; background: var(--line); }
+.cand.none .noposter, .cand.none > div:first-child { width: 46px; flex: none; }
+.cand .ov { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 13px; }
 .res-ok { color: var(--ok); } .res-error { color: var(--bad); }
 .res-skipped, .res-cancelled { color: var(--muted); }
 details > summary { cursor: pointer; list-style: none; }
@@ -449,14 +456,52 @@ function tvCard(el, members) {
 }
 
 function filmCard(el, p) {
+  const disc = p.titles[0].duration_s;
   el.innerHTML = `
     <div class="title">Name this film</div>
-    <div class="sub">Disc label ${esc(p.disc_label || "(none)")} isn't a usable name · ${hms(p.titles[0].duration_s)}</div>
+    <div class="sub">Disc label ${esc(p.disc_label || "(none)")} isn't a usable name · ${hms(disc)}</div>
     <label>Name (add a year in brackets only if you know it, e.g. Alien (1979))</label>
-    <input type="text" name="name" value="${esc(p.suggested.name || "")}" placeholder="Film name">
+    <div style="display:flex;gap:8px"><input type="text" name="name" value="${esc(p.suggested.name || "")}" placeholder="Film name" enterkeyhint="search" style="flex:1">
+      <button data-a="look">Look up</button></div>
+    <div class="cands"></div>
     <div class="row"><button class="primary" data-a="ok">Save</button><button class="danger small" data-a="discard">Discard rip</button></div>`;
-  el.querySelector("[data-a=ok]").onclick = (e) =>
-    act(e.target, () => api("POST", `/api/pending/${p.id}/answer`, { name: el.querySelector("[name=name]").value }), "Filed into Movies");
+  const input = el.querySelector("[name=name]"), cands = el.querySelector(".cands"),
+        ok = el.querySelector("[data-a=ok]");
+  let pick = null;  // the chosen TMDb film, or null = use the name as typed
+  const choose = (f) => {
+    pick = f;
+    cands.querySelectorAll(".cand").forEach((c) => c.classList.toggle("on", f != null && +c.dataset.id === f.id));
+    ok.textContent = f ? `Save as ${f.name}` : "Save";
+  };
+  async function look(btn) {
+    const q = input.value.trim();
+    if (!q) { toast("Type a name first"); return; }
+    btn.disabled = true;
+    cands.innerHTML = '<div class="sub" style="padding:8px 0">Looking up…</div>';
+    try {
+      const r = await api("GET", `/api/pending/${p.id}/tmdb?q=${encodeURIComponent(q)}`);
+      cands.innerHTML = r.length ? r.map((f) => `
+        <div class="cand" data-id="${f.id}">
+          ${f.poster ? `<img src="${esc(f.poster)}" alt="" loading="lazy">` : '<div class="noposter"></div>'}
+          <div><div><b>${esc(f.title)}</b> ${f.year ? `(${esc(f.year)})` : ""}</div>
+            <div class="sub">${f.runtime ? f.runtime + " min" : "running time unknown"} · ${f.fits ? '<span class="res-ok">fits the disc ✓</span>' : `doesn't fit the disc (${Math.round(disc / 60)} min)`}</div>
+            <div class="sub ov">${esc(f.overview || "")}</div></div>
+        </div>`).join("") + '<div class="cand none" data-id="0"><div></div><div class="sub">None of these: use the name as typed</div></div>'
+        : '<div class="sub" style="padding:8px 0">No films found on TMDb; Save uses the name as typed.</div>';
+      cands.querySelectorAll(".cand").forEach((c) => (c.onclick = () =>
+        choose(+c.dataset.id ? r.find((f) => f.id === +c.dataset.id) : null)));
+      const fits = r.filter((f) => f.fits);
+      choose(fits.length === 1 ? fits[0] : null);  // preselect a clear match
+    } catch (e) {
+      cands.innerHTML = `<div class="sub" style="padding:8px 0">${esc(e.message)}</div>`;
+    } finally { btn.disabled = false; }
+  }
+  el.querySelector("[data-a=look]").onclick = (e) => look(e.target);
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); look(el.querySelector("[data-a=look]")); } });
+  input.addEventListener("input", () => { if (pick) choose(null); });
+  ok.onclick = (e) =>
+    act(e.target, () => api("POST", `/api/pending/${p.id}/answer`,
+      pick ? { tmdb_id: pick.id } : { name: input.value }), "Filed into Movies");
   el.querySelector("[data-a=discard]").onclick = (e) => {
     if (confirm("Delete this rip?")) act(e.target, () => api("POST", `/api/pending/${p.id}/discard`), "Discarded");
   };

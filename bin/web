@@ -259,7 +259,7 @@ def answer(pid):
                 int(b["year"]) if b.get("year") else None)
             return jsonify(ok=True, filed=filed)
         if item["prompt"] == "name_film":
-            dest = library.answer_name_film(cfg, pid, b.get("name", ""))
+            dest = library.answer_name_film(cfg, pid, b.get("name", ""), b.get("tmdb_id"))
             return jsonify(ok=True, output=str(dest))
         if item["prompt"] == "choose_titles":
             library.answer_choose_titles(cfg, pid, b.get("titles", []), b.get("kind"))
@@ -292,6 +292,22 @@ def encode_save():
         return jsonify(encode.save_settings(cfg, body()))
     except ValueError as e:
         abort(400, str(e))
+
+
+@app.get("/api/pending/<pid>/tmdb")
+def pending_tmdb(pid):
+    """?q=name: TMDb candidates for a name_film prompt, those that fit the disc's
+    running time first (tmdb.search_films)."""
+    item = discrip.get_pending(cfg, pid)
+    if not item or item["prompt"] != "name_film":
+        abort(404, "no such prompt")
+    q = request.args.get("q", "").strip()
+    if not q:
+        abort(400, "type a name first")
+    try:
+        return jsonify(tmdb.search_films(cfg, q, item["titles"][0].get("duration_s")))
+    except tmdb.TmdbError as e:
+        abort(502, str(e))
 
 
 @app.get("/api/tmdb")
