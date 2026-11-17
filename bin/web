@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 import discrip  # noqa: E402
 import encode  # noqa: E402
 import library  # noqa: E402
-import preview  # noqa: E402
+import preview as clips  # noqa: E402  (bin/web has a preview() route)
 import tmdb  # noqa: E402
 import wifi  # noqa: E402
 
@@ -183,7 +183,7 @@ def pending_clip(pid):
     if not title.get("file") or not Path(title["file"]).exists():
         abort(404, "that title isn't ripped")
     try:
-        path = preview.clip(title["file"], min(t, max(0, (title.get("duration_s") or 0) - 1)))
+        path = clips.clip(title["file"], min(t, max(0, (title.get("duration_s") or 0) - 1)))
     except (RuntimeError, OSError, subprocess.TimeoutExpired) as e:
         abort(500, f"couldn't make a preview: {e}")
     resp = send_file(path, mimetype="video/mp4", conditional=True)

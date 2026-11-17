@@ -56,7 +56,9 @@ def clip(src, t):
         cmd = ["nice", "-n", "10", "ffmpeg", "-nostdin", "-loglevel", "error", "-y",
                "-ss", str(t), "-i", str(src), "-t", str(CLIP_S),
                "-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn",
-               "-vf", "scale=-2:288:interl=1", "-c:v", "libx264", "-preset", "ultrafast",
+               "-map_chapters", "-1",
+               # square pixels at the film's shape (DVDs store 16:9 squeezed into 720x576)
+               "-vf", "scale='trunc(288*dar/2)*2':288:interl=1,setsar=1", "-c:v", "libx264", "-preset", "ultrafast",
                "-crf", "28", "-pix_fmt", "yuv420p",
                "-c:a", "aac", "-ac", "2", "-b:a", "96k", "-movflags", "+faststart", str(tmp)]
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
