@@ -135,7 +135,8 @@ def status():
 
 @app.get("/api/history")
 def history():
-    return jsonify(discrip.read_state(cfg)["history"])
+    """Runs, newest first, each with its disc record (see library.history_view)."""
+    return jsonify(library.history_view(cfg, discrip.read_state(cfg)["history"]))
 
 
 @app.get("/api/log/<job_id>")
@@ -342,6 +343,15 @@ def wifi_remove():
         return jsonify(wifi.remove(str(body().get("ssid", ""))))
     except wifi.WifiError as e:
         abort(400, str(e))
+
+
+@app.delete("/api/discs/<fp>")
+def forget_disc(fp):
+    """Forget a disc's saved answer and ripped record (files stay)."""
+    require_token()
+    if not library.forget_disc(cfg, fp):
+        abort(404, "no such disc")
+    return jsonify(ok=True)
 
 
 @app.delete("/api/known-discs/<fp>")

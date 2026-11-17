@@ -132,6 +132,56 @@ def forget(cfg, fp):
         return kd.pop(fp, None)
 
 
+def forget_disc(cfg, fp):
+    """Forget a disc entirely: its saved answer and its ripped record, so the next
+    time it goes in it's treated as new. Its files stay in the library."""
+    with discrip.json_update(_store(cfg, "known_discs.json"), dict) as kd:
+        answer = kd.pop(fp, None)
+    with discrip.json_update(_store(cfg, "library.json"), dict) as lib:
+        ripped = lib.pop(fp, None)
+    return bool(answer or ripped)
+
+
+def history_view(cfg, history):
+    """The run history joined with the disc records: each run that ripped a disc
+    gets "disc": {fp, label, kind, outputs, ripped_at, answer}. Discs whose runs
+    have dropped off the history, and saved answers for discs never ripped, are
+    added at the end as entries with "older": true."""
+    lib = _read(cfg, "library.json")
+    kd = _read(cfg, "known_discs.json")
+    by_job = {e.get("job_id"): fp for fp, e in lib.items()}
+
+    def disc(fp):
+        e = lib.get(fp, {})
+        a = kd.get(fp)
+        return {"fp": fp, "label": e.get("label") or (a or {}).get("label"),
+                "kind": e.get("kind") or (a or {}).get("kind"),
+                "outputs": e.get("outputs", []), "ripped_at": e.get("ripped_at"),
+                "answer": a}
+
+    out, seen = [], set()
+    for job in history:
+        job = dict(job)
+        fp = by_job.get(job["id"])
+        if fp and fp not in seen:
+            seen.add(fp)
+            job["disc"] = disc(fp)
+        out.append(job)
+    older = [fp for fp in lib if fp not in seen] + \
+            [fp for fp in kd if fp not in seen and fp not in lib]
+    older.sort(key=lambda fp: lib.get(fp, {}).get("ripped_at")
+               or kd[fp].get("updated_at", ""), reverse=True)
+    for fp in older:
+        d = disc(fp)
+        out.append({"id": lib.get(fp, {}).get("job_id"), "older": True,
+                    "type": "audio" if fp.startswith("mbdiscid:") else "video",
+                    "title": d["label"], "result": "ok" if d["outputs"] else None,
+                    "finished_at": d["ripped_at"] or kd[fp].get("updated_at"),
+                    "output": d["outputs"][0] if d["outputs"] else None,
+                    "error": None, "disc": d})
+    return out
+
+
 def _place(cfg, src, dest, fp):
     """Move src to dest. If dest exists, replace it only if this disc wrote it.
     Returns True if placed."""

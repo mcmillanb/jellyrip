@@ -80,6 +80,7 @@ input[type=text], input[type=number], input[type=password], input[type=time] {
 .hist { display: flex; justify-content: space-between; gap: 10px; padding: 10px 0;
         border-top: 1px solid var(--line); cursor: pointer; }
 .hist:first-child { border-top: none; }
+.hdet { padding: 0 0 10px; }
 .res-ok { color: var(--ok); } .res-error { color: var(--bad); }
 .res-skipped, .res-cancelled { color: var(--muted); }
 details > summary { cursor: pointer; list-style: none; }
@@ -238,10 +239,6 @@ if (window.parent !== window) {
     </details>
   </div>
 
-  <div class="card" style="margin-top:22px">
-    <details class="keep" id="known-d"><summary class="big">Remembered discs <span class="muted" style="font-size:14px;font-weight:400">(answers reused when a disc comes back)</span></summary>
-      <div id="known"></div></details>
-  </div>
 </main>
 
 <dialog id="power-dlg"><div>
@@ -489,45 +486,85 @@ function chooseCard(el, p) {
   };
 }
 
-// ---------------------------------------------------------------- history, known discs
+// ---------------------------------------------------------------- history (with each disc's record)
 let lastJobId = null;
+const MEDIA = "/srv/media/";
+const openRows = new Set();  // history rows whose details are open (kept across refreshes)
+let histCache = [];
+function histName(j) {
+  // Films: the name they were filed under (the run's title may be the raw label).
+  const d = j.disc, out = d && d.outputs && d.outputs[0];
+  if (d && d.kind === "film" && out) return out.split("/").pop().replace(/\.mkv$/, "");
+  return j.title || (d && d.label) || "Disc";
+}
+function answerText(a) {
+  if (!a) return "";
+  if (a.kind === "tv") return `${a.show}, season ${a.season} from episode ${a.first_episode}`;
+  return a.name || a.kind || "";
+}
 async function refreshHistory() {
   try {
-    const h = await api("GET", "/api/history");
+    const h = histCache = await api("GET", "/api/history");
     const now = new Date().toISOString();
-    $("#history").innerHTML = h.length ? h.slice(0, 25).map((j) => `
-      <div class="hist" data-id="${esc(j.id)}">
-        <div><div>${esc(j.title || "Disc")}</div><div class="sub">${esc(j.type || "")}${j.error ? " · " + esc(j.error) : ""}</div></div>
-        <div class="res-${esc(j.result)}" style="text-align:right;white-space:nowrap">${RESULT[j.result] || ""} ${esc(j.result)}<div class="sub">${ago(j.finished_at, now)} ago</div></div>
-      </div>`).join("") : '<div class="empty">Nothing ripped yet.</div>';
-    $("#history").querySelectorAll(".hist").forEach((row) => (row.onclick = () => showLog(row)));
+    let olderShown = false;
+    $("#history").innerHTML = h.length ? h.map((j, i) => {
+      const head = j.older && !olderShown ? (olderShown = true,
+        '<div class="sub" style="padding:14px 0 4px">Older discs (their runs have dropped off the history)</div>') : "";
+      const when = j.finished_at ? `${ago(j.finished_at, now)} ago` : "";
+      return head + `
+      <div class="hist" data-i="${i}">
+        <div><div>${esc(histName(j))}</div><div class="sub">${esc(j.type || "")}${j.disc && j.disc.answer ? " · answer saved" : ""}${j.error ? " · " + esc(j.error) : ""}</div></div>
+        <div class="res-${esc(j.result || "skipped")}" style="text-align:right;white-space:nowrap">${RESULT[j.result] || ""} ${esc(j.result || "")}<div class="sub">${when}</div></div>
+      </div>`;
+    }).join("") : '<div class="empty">Nothing ripped yet.</div>';
+    $("#history").querySelectorAll(".hist").forEach((row) => {
+      row.onclick = () => toggleRow(row);
+      if (openRows.has(rowKey(h[+row.dataset.i]))) showDetails(row);
+    });
     $("#hist-state").textContent = h.length
-      ? `(latest: ${h[0].title || "Disc"} ${RESULT[h[0].result] || h[0].result}, ${ago(h[0].finished_at, now)} ago)` : "";
+      ? `(latest: ${histName(h[0])} ${RESULT[h[0].result] || h[0].result || ""}, ${ago(h[0].finished_at, now)} ago)` : "";
   } catch (e) { $("#history").innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
 }
-async function showLog(row) {
-  const next = row.nextElementSibling;
-  if (next && next.tagName === "PRE") { next.remove(); return; }
-  try {
-    const r = await api("GET", `/api/log/${row.dataset.id}?lines=300`);
-    const pre = document.createElement("pre");
-    pre.textContent = r.lines.join("\n");
-    row.after(pre);
-  } catch (e) { toast(e.message); }
+const rowKey = (j) => j.id || (j.disc && j.disc.fp);
+function toggleRow(row) {
+  const next = row.nextElementSibling, key = rowKey(histCache[+row.dataset.i]);
+  if (next && next.classList.contains("hdet")) { next.remove(); openRows.delete(key); return; }
+  openRows.add(key);
+  showDetails(row);
 }
-$("#known-d").ontoggle = async () => {
-  if (!$("#known-d").open) return;
-  const k = await api("GET", "/api/known-discs");
-  const rows = Object.entries(k);
-  $("#known").innerHTML = rows.length ? rows.map(([fp, d]) => `
-    <div class="hist"><div><div>${esc(d.name || `${d.show} season ${d.season} from E${d.first_episode}`)}</div>
-      <div class="sub">${esc(d.label)} · ${esc(d.kind)}</div></div>
-      <button class="small danger" data-fp="${esc(fp)}">Forget</button></div>`).join("")
-    : '<div class="empty">None yet.</div>';
-  $("#known").querySelectorAll("button").forEach((b) => (b.onclick = () => {
-    if (confirm("Forget this answer? The disc will ask again.")) act(b, () => api("DELETE", `/api/known-discs/${encodeURIComponent(b.dataset.fp)}`), "Forgotten").then(() => $("#known-d").ontoggle());
-  }));
-};
+function showDetails(row) {
+  const j = histCache[+row.dataset.i], d = j.disc;
+  const div = document.createElement("div");
+  div.className = "hdet";
+  const outs = d ? d.outputs.map((o) => esc(o.startsWith(MEDIA) ? o.slice(MEDIA.length) : o)) : [];
+  div.innerHTML = (d ? `
+      <div class="sub">Disc: ${esc(d.label || "?")}${d.ripped_at ? " · ripped " + esc(d.ripped_at.slice(0, 10)) : ""}</div>
+      ${outs.length ? `<div class="sub">Filed: ${outs.length > 3 ? outs.slice(0, 2).join("<br>") + `<br>… and ${outs.length - 2} more` : outs.join("<br>")}</div>` : ""}
+      ${d.answer ? `<div class="sub">Saved answer: ${esc(answerText(d.answer))}</div>` : ""}` : "") + `
+    <div class="row" style="margin-top:8px">
+      ${j.id && !j.older ? '<button class="small" data-a="log">Show log</button>' : ""}
+      ${d ? '<button class="small danger" data-a="forget">Forget disc</button>' : ""}
+    </div>`;
+  row.after(div);
+  const logBtn = div.querySelector('[data-a="log"]');
+  if (logBtn) logBtn.onclick = async () => {
+    const pre = div.querySelector("pre");
+    if (pre) { pre.remove(); logBtn.textContent = "Show log"; return; }
+    try {
+      const r = await api("GET", `/api/log/${j.id}?lines=300`);
+      const p = document.createElement("pre");
+      p.textContent = r.lines.join("\n");
+      div.append(p);
+      logBtn.textContent = "Hide log";
+    } catch (e) { toast(e.message); }
+  };
+  const fBtn = div.querySelector('[data-a="forget"]');
+  if (fBtn) fBtn.onclick = () => {
+    if (confirm(`Forget ${histName(j)}?\n\nNext time this disc goes in it's treated as new: ripped again` +
+                (d.answer ? ", and you'll be asked about it again" : "") + `. The files already in the library stay.`))
+      act(fBtn, () => api("DELETE", `/api/discs/${encodeURIComponent(d.fp)}`), "Forgotten");
+  };
+}
 
 async function tmdbState() {
   const t = await api("GET", "/api/tmdb");
