@@ -94,10 +94,53 @@ pre { white-space: pre-wrap; word-break: break-all; font-size: 12px; line-height
 #temp-chart .hot { fill: var(--bad); opacity: .16; }
 #temp-chart .line { fill: none; stroke: var(--accent); stroke-width: 1.6; stroke-linejoin: round; }
 .empty { color: var(--muted); text-align: center; padding: 6px 0; }
+/* In Jellyfin's pop-up the pop-up's own bar shows the name. */
+html.embed body { padding-top: 0; }
+html.embed header h1 { display: none; }
+html.embed header { justify-content: flex-end; }
 .toast { position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom));
          transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 10px 16px;
          border-radius: 10px; font-size: 15px; max-width: 90vw; z-index: 10; }
 </style>
+<script>
+// Jellyfin's theme: given by pill.js (?theme=, when opened from Jellyfin) and
+// remembered here, so opening :8080 directly looks the same. Without one, the
+// built-in light/dark colours above follow the device setting.
+(function () {
+  const q = new URLSearchParams(location.search);
+  const root = document.documentElement;
+  if (q.get("embed")) root.classList.add("embed");
+  let t = null;
+  try { t = JSON.parse(q.get("theme") || "null"); } catch {}
+  try {
+    if (t) localStorage.setItem("discrip-theme", JSON.stringify(t));
+    else t = JSON.parse(localStorage.getItem("discrip-theme") || "null");
+  } catch {}
+  if (!t || !t.bg) return;
+  const mix = (c, pct, base) => `color-mix(in srgb, ${c} ${pct}%, ${base})`;
+  const dark = t.mode !== "light";
+  const card = t.card && t.card !== t.bg ? t.card : mix(t.text || (dark ? "#fff" : "#000"), 6, t.bg);
+  const text = t.text || (dark ? "#eceef2" : "#1b1d22");
+  const ok = t.ok || (dark ? "#4cc27a" : "#1f8a4c"), warn = t.warn || (dark ? "#f0a63a" : "#b26a00"),
+        bad = t.bad || (dark ? "#f2685c" : "#c0352b");
+  const vars = {
+    "--bg": t.bg, "--card": card, "--text": text, "--muted": t.muted ? mix(t.muted, 70, t.bg) : mix(text, 60, t.bg),
+    "--line": t.line || mix(text, 14, t.bg), "--bar": t.line || mix(text, 14, t.bg),
+    "--accent": t.accent || "#00a4dc", "--accent-text": t.accentText || (dark ? "#000" : "#fff"),
+    "--ok": ok, "--warn": warn, "--bad": bad,
+    "--ok-bg": mix(ok, 16, card), "--warn-bg": mix(warn, 16, card), "--bad-bg": mix(bad, 16, card),
+  };
+  for (const [k, v] of Object.entries(vars)) root.style.setProperty(k, v);
+  root.style.colorScheme = dark ? "dark" : "light";
+  document.querySelectorAll('meta[name="theme-color"]').forEach((m) => { m.content = t.bg; m.removeAttribute("media"); });
+})();
+// Esc closes Jellyfin's pop-up.
+if (window.parent !== window) {
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") window.parent.postMessage({ discrip: "close" }, "*");
+  });
+}
+</script>
 </head>
 <body>
 <main>
