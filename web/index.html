@@ -94,10 +94,23 @@ pre { white-space: pre-wrap; word-break: break-all; font-size: 12px; line-height
 #temp-chart .hot { fill: var(--bad); opacity: .16; }
 #temp-chart .line { fill: none; stroke: var(--accent); stroke-width: 1.6; stroke-linejoin: round; }
 .empty { color: var(--muted); text-align: center; padding: 6px 0; }
+header .hl { display: flex; align-items: center; gap: 4px; }
+button.icon { min-height: 40px; width: 40px; padding: 0; border-radius: 50%; border: 1px solid var(--line);
+  background: var(--card); color: var(--muted); display: inline-flex; align-items: center; justify-content: center; }
+button.icon:hover { color: var(--bad); }
+summary.big { font-size: 17px; font-weight: 600; display: flex; align-items: baseline; gap: 6px; }
+summary.big::before { content: "›"; display: inline-block; width: 12px; color: var(--muted); transition: transform .15s; }
+details[open] > summary.big::before { transform: rotate(90deg); }
+details.sect { border-top: 1px solid var(--line); padding: 12px 0 2px; margin-top: 12px; }
+details.sect:last-child { padding-bottom: 0; }
+details.sect > summary { padding: 2px 0; }
+dialog { border: 1px solid var(--line); border-radius: 14px; background: var(--card); color: var(--text);
+  padding: 0; width: min(420px, calc(100vw - 32px)); }
+dialog > div { padding: 18px; }
+dialog::backdrop { background: rgba(0,0,0,.5); }
 /* In Jellyfin's pop-up the pop-up's own bar shows the name. */
 html.embed body { padding-top: 0; }
 html.embed header h1 { display: none; }
-html.embed header { justify-content: flex-end; }
 .toast { position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom));
          transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 10px 16px;
          border-radius: 10px; font-size: 15px; max-width: 90vw; z-index: 10; }
@@ -145,7 +158,12 @@ if (window.parent !== window) {
 <body>
 <main>
   <header>
-    <h1>discrip</h1>
+    <div class="hl">
+      <button class="icon" id="b-power" title="Restart or shut down" aria-label="Restart or shut down">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M13 3h-2v10h2V3zm4.83 2.17-1.42 1.42C17.99 7.86 19 9.81 19 12c0 3.87-3.13 7-7 7s-7-3.13-7-7c0-2.19 1.01-4.14 2.58-5.42L6.17 5.17C4.23 6.82 3 9.26 3 12c0 4.97 4.03 9 9 9s9-4.03 9-9c0-2.74-1.23-5.18-3.17-6.83z"/></svg>
+      </button>
+      <h1>discrip</h1>
+    </div>
     <div class="chips" id="chips"></div>
   </header>
   <div id="banners"></div>
@@ -155,11 +173,9 @@ if (window.parent !== window) {
   <h2 id="queue-h" hidden>Needs you</h2>
   <div id="queue"></div>
 
-  <h2>History</h2>
-  <div class="card" id="history"><div class="empty">Loading…</div></div>
-
-  <h2>Overnight encoding</h2>
-  <div class="card" id="encode">
+  <div class="card" style="margin-top:22px">
+   <details class="keep" id="encode-d" open><summary class="big">Overnight encoding</summary>
+   <div id="encode" style="margin-top:10px">
     <div class="title" id="enc-title">…</div>
     <div class="sub" id="enc-sub"></div>
     <div class="bar" id="enc-bar" hidden><div></div></div>
@@ -172,63 +188,71 @@ if (window.parent !== window) {
       <svg id="temp-chart" viewBox="0 0 320 140" style="width:100%;height:auto;margin-top:8px;display:block" role="img" aria-label="CPU temperature chart"></svg>
       <div class="sub" id="temp-sum"></div>
     </details>
-    <details id="enc-d" style="margin-top:10px"><summary class="muted">Settings</summary>
-      <label class="check" style="border:none"><input type="checkbox" id="enc-on"> <span>Re-encode DVD rips to save space</span></label>
-      <div class="grid" style="grid-template-columns:1fr 1fr">
-        <div><label for="enc-start">From</label><input type="time" id="enc-start"></div>
-        <div><label for="enc-end">Until</label><input type="time" id="enc-end"></div>
-      </div>
-      <label>Codec</label>
-      <span class="seg">
-        <label><input type="radio" name="enc-codec" value="h264"><span>H.264</span></label>
-        <label><input type="radio" name="enc-codec" value="h265"><span>H.265</span></label>
-      </span>
-      <div class="sub" style="margin-top:6px">H.264 plays on everything (browsers too), about 2 h per film. H.265 is about a third smaller but about 2.5× slower, and some browsers and TVs can't play it.</div>
-      <label class="check" style="border:none"><input type="checkbox" id="enc-keep"> <span>Keep the original MPEG-2 files (in _originals; saves no space)</span></label>
-      <div class="row"><button class="primary" id="enc-save">Save</button></div>
+   </div>
+   </details>
+  </div>
+
+  <div class="card" style="margin-top:22px">
+    <details class="keep" id="settings-d"><summary class="big">Settings</summary>
+
+      <details class="sect" id="enc-d"><summary><b>Encoding</b> <span class="muted" id="enc-state"></span></summary>
+        <label class="check" style="border:none"><input type="checkbox" id="enc-on"> <span>Re-encode DVD rips to H.264 to save space (about 2 h per film; plays on everything, browsers too)</span></label>
+        <label class="check" style="border:none"><input type="checkbox" id="enc-keep"> <span>Keep the original MPEG-2 files (in _originals; saves no space)</span></label>
+        <div class="grid" style="grid-template-columns:1fr 1fr">
+          <div><label for="enc-start">Encode from</label><input type="time" id="enc-start"></div>
+          <div><label for="enc-end">Until</label><input type="time" id="enc-end"></div>
+        </div>
+        <div class="row"><button class="primary" id="enc-save">Save</button></div>
+      </details>
+
+      <details class="sect" id="wifi-d"><summary><b>Wi-Fi</b> <span class="muted" id="wifi-state"></span></summary>
+        <div class="sub" style="margin-top:8px">Save any number of networks; the Pi joins whichever one is in range. While the Ethernet cable is in, that's used first and Wi-Fi is the fallback.</div>
+        <div id="wifi-links" class="sub" style="margin-top:8px"></div>
+        <div id="wifi-list" style="margin-top:8px"></div>
+        <label for="wifi-ssid">Network name (SSID)</label>
+        <input type="text" id="wifi-ssid" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <label for="wifi-pass">Password (leave empty for an open network)</label>
+        <input type="password" id="wifi-pass" autocomplete="new-password">
+        <label class="check" style="border:none"><input type="checkbox" id="wifi-hidden"> <span>Hidden network (doesn't broadcast its name)</span></label>
+        <div class="row"><button class="primary" id="wifi-add">Save network</button></div>
+      </details>
+
+      <details class="sect" id="tmdb-d"><summary><b>Film details (TMDb)</b> <span class="muted" id="tmdb-state"></span></summary>
+        <div class="sub" style="margin-top:8px">With a key from themoviedb.org (Settings → API), each film disc's label is looked up when it's ripped and filed under the film's proper title and year, e.g. <i>Up (2009)</i>, tagged with its TMDb id so Jellyfin picks the right film. Only a confident match is used (same title, running time agrees); otherwise the label is used as before.</div>
+        <label for="tmdb-key">API key or read access token</label>
+        <input type="password" id="tmdb-key" autocomplete="off" placeholder="paste the key">
+        <div class="row"><button class="primary" id="tmdb-save">Check and save</button><button class="danger" id="tmdb-clear">Remove</button></div>
+      </details>
+
+      <details class="sect" id="token-d"><summary><b>Access token</b> <span class="muted" id="token-state"></span></summary>
+        <label for="token">Needed for the buttons. It is in /opt/discrip/discrip.toml under [web].</label>
+        <input type="password" id="token" autocomplete="off">
+        <div class="row"><button class="primary" id="token-save">Save on this device</button></div>
+      </details>
     </details>
   </div>
 
-  <h2>More</h2>
-  <div class="card">
-    <details id="known-d"><summary><b>Remembered discs</b> <span class="muted">(answers reused when a disc comes back)</span></summary>
+  <div class="card" style="margin-top:22px">
+    <details class="keep" id="history-d"><summary class="big">History <span class="muted" id="hist-state" style="font-size:14px;font-weight:400"></span></summary>
+      <div id="history" style="margin-top:6px"><div class="empty">Loading…</div></div>
+    </details>
+  </div>
+
+  <div class="card" style="margin-top:22px">
+    <details class="keep" id="known-d"><summary class="big">Remembered discs <span class="muted" style="font-size:14px;font-weight:400">(answers reused when a disc comes back)</span></summary>
       <div id="known"></div></details>
   </div>
-  <div class="card">
-    <details id="tmdb-d"><summary><b>Film details (TMDb)</b> <span class="muted" id="tmdb-state"></span></summary>
-      <div class="sub" style="margin-top:8px">With a key from themoviedb.org (Settings → API), each film disc's label is looked up when it's ripped and filed under the film's proper title and year, e.g. <i>Up (2009)</i>, tagged with its TMDb id so Jellyfin picks the right film. Only a confident match is used (same title, running time agrees); otherwise the label is used as before.</div>
-      <label for="tmdb-key">API key or read access token</label>
-      <input type="password" id="tmdb-key" autocomplete="off" placeholder="paste the key">
-      <div class="row"><button class="primary" id="tmdb-save">Check and save</button><button class="danger" id="tmdb-clear">Remove</button></div>
-    </details>
-  </div>
-  <div class="card">
-    <details id="wifi-d"><summary><b>Wi-Fi</b> <span class="muted" id="wifi-state"></span></summary>
-      <div class="sub" style="margin-top:8px">Save any number of networks; the Pi joins whichever one is in range. While the Ethernet cable is in, that's used first and Wi-Fi is the fallback.</div>
-      <div id="wifi-links" class="sub" style="margin-top:8px"></div>
-      <div id="wifi-list" style="margin-top:8px"></div>
-      <label for="wifi-ssid">Network name (SSID)</label>
-      <input type="text" id="wifi-ssid" autocomplete="off" autocapitalize="off" spellcheck="false">
-      <label for="wifi-pass">Password (leave empty for an open network)</label>
-      <input type="password" id="wifi-pass" autocomplete="new-password">
-      <label class="check" style="border:none"><input type="checkbox" id="wifi-hidden"> <span>Hidden network (doesn't broadcast its name)</span></label>
-      <div class="row"><button class="primary" id="wifi-add">Save network</button></div>
-    </details>
-  </div>
-  <div class="card">
-    <details id="power-d"><summary><b>Power</b> <span class="muted">(or hold the button 5 s)</span></summary>
-      <div class="sub" style="margin-top:8px">Shut down before unplugging. The board lights come back on while it shuts down; unplug once the green one stops flickering. Press the button to start it again.</div>
-      <div class="row"><button id="b-reboot">Restart</button><button class="danger" id="b-poweroff">Shut down</button></div>
-    </details>
-  </div>
-  <div class="card">
-    <details id="token-d"><summary><b>Access token</b> <span class="muted" id="token-state"></span></summary>
-      <label for="token">Needed for the buttons. It is in /opt/discrip/discrip.toml under [web].</label>
-      <input type="password" id="token" autocomplete="off">
-      <div class="row"><button class="primary" id="token-save">Save on this device</button></div>
-    </details>
-  </div>
 </main>
+
+<dialog id="power-dlg"><div>
+  <div class="title">Restart or shut down?</div>
+  <div class="sub" style="margin-top:6px">Shut down before unplugging. The board lights come back on while it shuts down; unplug once the green one stops flickering. Press the button (or hold it 5 s to shut down) to start it again.</div>
+  <div class="row">
+    <button id="b-reboot">Restart</button>
+    <button class="danger" id="b-poweroff">Shut down</button>
+    <button id="b-pcancel" style="margin-left:auto">Cancel</button>
+  </div>
+</div></dialog>
 
 <script>
 "use strict";
@@ -263,7 +287,10 @@ async function api(method, path, data) {
   }
   const r = await fetch(path, opts);
   const j = await r.json().catch(() => ({}));
-  if (r.status === 401) { $("#token-d").open = true; throw new Error("Enter the access token first (bottom of the page)."); }
+  if (r.status === 401) {
+    $("#settings-d").open = true; $("#token-d").open = true; $("#token-d").scrollIntoView({ block: "center" });
+    throw new Error("Enter the access token first (Settings → Access token).");
+  }
   if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
   return j;
 }
@@ -474,6 +501,8 @@ async function refreshHistory() {
         <div class="res-${esc(j.result)}" style="text-align:right;white-space:nowrap">${RESULT[j.result] || ""} ${esc(j.result)}<div class="sub">${ago(j.finished_at, now)} ago</div></div>
       </div>`).join("") : '<div class="empty">Nothing ripped yet.</div>';
     $("#history").querySelectorAll(".hist").forEach((row) => (row.onclick = () => showLog(row)));
+    $("#hist-state").textContent = h.length
+      ? `(latest: ${h[0].title || "Disc"} ${RESULT[h[0].result] || h[0].result}, ${ago(h[0].finished_at, now)} ago)` : "";
   } catch (e) { $("#history").innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
 }
 async function showLog(row) {
@@ -647,26 +676,31 @@ document.querySelectorAll("input[name=temp-h]").forEach((r) => r.onchange = draw
 setInterval(drawTemps, 60e3);
 
 let encLoaded = false;
+async function encState() {
+  const e = await api("GET", "/api/encode");
+  $("#enc-state").textContent = e.enabled
+    ? `(on, ${e.window_start}–${e.window_end}${e.keep_originals ? ", keeping originals" : ""})` : "(off)";
+  return e;
+}
+encState().catch(() => {});
 $("#enc-d").ontoggle = async () => {
   if (!$("#enc-d").open || encLoaded) return;
-  const e = await api("GET", "/api/encode");
+  const e = await encState();
   $("#enc-on").checked = e.enabled; $("#enc-keep").checked = e.keep_originals;
   $("#enc-start").value = e.window_start; $("#enc-end").value = e.window_end;
-  document.querySelector(`input[name=enc-codec][value=${e.codec}]`).checked = true;
   encLoaded = true;
 };
 $("#enc-save").onclick = (ev) => act(ev.target, () => api("POST", "/api/encode", {
   enabled: $("#enc-on").checked, keep_originals: $("#enc-keep").checked,
   window_start: $("#enc-start").value, window_end: $("#enc-end").value,
-  codec: document.querySelector("input[name=enc-codec]:checked").value,
-}), "Saved: the encoder picks it up within 15 s");
+}).then(encState), "Saved: the encoder picks it up within 15 s");
 
 // ---------------------------------------------------------------- power
 let powerMsg = null;  // shown instead of "Can't reach discrip" after a shutdown/restart
 let powerWentDown = false;
 async function power(btn, action) {
   const verb = action === "reboot" ? "Restart" : "Shut down";
-  if (!confirm(`${verb} discrip?`)) return;
+  $("#power-dlg").close();
   let force = false;
   for (;;) {
     try {
@@ -686,8 +720,24 @@ async function power(btn, action) {
     : "Shutting down. Unplug once the green light on the Pi stops flickering; press the button to start it again.";
   $("#banners").innerHTML = `<div class="banner info">${esc(powerMsg)}</div>`;
 }
+$("#b-power").onclick = () => $("#power-dlg").showModal();
+$("#b-pcancel").onclick = () => $("#power-dlg").close();
+$("#power-dlg").addEventListener("click", (e) => { if (e.target === $("#power-dlg")) $("#power-dlg").close(); });
 $("#b-reboot").onclick = (ev) => power(ev.target, "reboot");
 $("#b-poweroff").onclick = (ev) => power(ev.target, "poweroff");
+
+// ---------------------------------------------------------------- sections
+// Open/closed state of the main sections, remembered on this device.
+document.querySelectorAll("details.keep").forEach((d) => {
+  try {
+    const v = localStorage.getItem("discrip-open-" + d.id);
+    if (v !== null) d.open = v === "1";
+  } catch {}
+  d.addEventListener("toggle", () => {
+    try { localStorage.setItem("discrip-open-" + d.id, d.open ? "1" : "0"); } catch {}
+  });
+});
+document.querySelectorAll("details.keep[open]").forEach((d) => d.dispatchEvent(new Event("toggle")));
 
 // ---------------------------------------------------------------- loop
 async function poll() {

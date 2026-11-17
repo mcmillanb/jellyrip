@@ -28,11 +28,11 @@ import mkv
 log = logging.getLogger("encode")
 
 CODECS = {
-    # name: (ffmpeg args, codec_name that ffprobe reports)
+    # name: (ffmpeg args, codec_name that ffprobe reports). H.264 only: it plays on
+    # everything, browsers included. (H.265 was ~1/3 smaller but ~2.5x slower and
+    # some browsers and TVs can't play it.)
     "h264": (["-c:v", "libx264", "-preset", "slow", "-crf", "20", "-profile:v", "high",
               "-pix_fmt", "yuv420p"], "h264"),
-    "h265": (["-c:v", "libx265", "-preset", "fast", "-crf", "22", "-pix_fmt", "yuv420p",
-              "-tag:v", "hvc1"], "hevc"),
 }
 SOURCE_CODECS = {"mpeg2video", "mpeg1video"}
 
@@ -50,6 +50,7 @@ def settings(cfg):
         s.update(json.loads(settings_path(cfg).read_text()))
     except (FileNotFoundError, json.JSONDecodeError):
         pass
+    s["codec"] = "h264"  # the only one now, whatever an older setting says
     return s
 
 
@@ -61,16 +62,12 @@ def save_settings(cfg, new):
             if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", str(new[key])):
                 raise ValueError(f"{key} must be HH:MM")
             s[key] = new[key]
-    if "codec" in new:
-        if new["codec"] not in CODECS:
-            raise ValueError("codec must be h264 or h265")
-        s["codec"] = new["codec"]
     for key in ("enabled", "keep_originals"):
         if key in new:
             s[key] = bool(new[key])
     with discrip.json_update(settings_path(cfg), dict) as stored:
         stored.clear()
-        stored.update({k: s[k] for k in ("enabled", "window_start", "window_end", "codec",
+        stored.update({k: s[k] for k in ("enabled", "window_start", "window_end",
                                          "keep_originals")})
     return s
 
