@@ -88,7 +88,8 @@ def _get(key, path, params=None, timeout=10):
 # ---------------------------------------------------------------- matching
 
 def _norm(title):
-    t = re.sub(r"[^\w\s]", " ", title.lower().replace("&", " and "))
+    t = re.sub(r"['\u2019`]", "", title.lower())  # It's / It’s / Its alike
+    t = re.sub(r"[^\w\s]", " ", t.replace("&", " and "))
     t = re.sub(r"\s+", " ", t).strip()
     return re.sub(r"^(the|a|an) ", "", t)
 
