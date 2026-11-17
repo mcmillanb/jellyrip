@@ -102,6 +102,23 @@ def _loose(title):
     return " ".join(w for w in _norm(title).split() if w not in SMALL_WORDS)
 
 
+EDITION = re.compile(
+    r"\s*[\(\[][^\)\]]*[\)\]]\s*$"                      # trailing (...) or [...]
+    r"|\s*[-:]?\s*\b((special|collector'?s|anniversary|extended|ultimate|deluxe|"
+    r"limited|definitive|director'?s cut|platinum|remastered)\b.*)$", re.I)
+
+
+def search_phrase(query):
+    """Drop edition tags: 'Monty Python and the Holy Grail (Special Edition)' ->
+    'Monty Python and the Holy Grail'."""
+    q = query.strip()
+    while True:
+        new = EDITION.sub("", q).strip()
+        if new == q or not new:
+            return q
+        q = new
+
+
 def runtime_ok(tmdb_min, disc_s):
     """TMDb's running time (minutes) against the disc's main title (seconds). PAL
     DVDs play 4% fast, and listed times vary, so allow 6 min or 8%."""
@@ -128,6 +145,17 @@ def match_film(cfg, query, disc_s, year=None):
     key, _ = get_key(cfg)
     if not key or not query:
         return None
+    tried = []
+    for q in (query, search_phrase(query)):  # the full name first, then without
+        if q not in tried:                    # an edition tag
+            tried.append(q)
+            match = _match(cfg, key, q, disc_s, year)
+            if match:
+                return match
+    return None
+
+
+def _match(cfg, key, query, disc_s, year):
     lang = cfg.get("tmdb", {}).get("language", "en-GB")
     try:
         params = {"query": query, "include_adult": "false", "language": lang}
