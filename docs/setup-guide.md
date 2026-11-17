@@ -312,6 +312,8 @@ journalctl -fu discrip-watcher -u discrip-rip       # watch a rip
 
 ## Day to day
 
+**Wi-Fi:** the web app's **Wi-Fi** card (under More) saves networks by name and password, with a box for hidden networks. Save as many as you like: the Pi joins whichever saved network is in range. While the Ethernet cable is in, Ethernet is used first and Wi-Fi is the fallback. NetworkManager stores the passwords in root-only files, and the web app never shows them again. The polkit rule lets the discrip user make these changes. To find the Pi's address on Wi-Fi, open the card while the cable is still in, or use `http://<hostname>.local:8080/`.
+
 - **Updating:** `cd ~/jellyrip && git pull && sudo bash setup/03-discrip.sh`. Your config, token and state are kept. New config options get their defaults from `lib/discrip.py`. `config/discrip.toml` documents them, so copy across any you want to change.
 - **Config:** the live file is `/opt/discrip/discrip.toml`. After editing it, run `sudo systemctl restart discrip-watcher discrip-web discrip-encode`. Rips pick up changes at their next start. Encoding settings are better changed in the web app.
 - **Logs:**

@@ -160,6 +160,19 @@ pre { white-space: pre-wrap; word-break: break-all; font-size: 12px; line-height
     </details>
   </div>
   <div class="card">
+    <details id="wifi-d"><summary><b>Wi-Fi</b> <span class="muted" id="wifi-state"></span></summary>
+      <div class="sub" style="margin-top:8px">Save any number of networks; the Pi joins whichever one is in range. While the Ethernet cable is in, that's used first and Wi-Fi is the fallback.</div>
+      <div id="wifi-links" class="sub" style="margin-top:8px"></div>
+      <div id="wifi-list" style="margin-top:8px"></div>
+      <label for="wifi-ssid">Network name (SSID)</label>
+      <input type="text" id="wifi-ssid" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <label for="wifi-pass">Password (leave empty for an open network)</label>
+      <input type="password" id="wifi-pass" autocomplete="new-password">
+      <label class="check" style="border:none"><input type="checkbox" id="wifi-hidden"> <span>Hidden network (doesn't broadcast its name)</span></label>
+      <div class="row"><button class="primary" id="wifi-add">Save network</button></div>
+    </details>
+  </div>
+  <div class="card">
     <details id="power-d"><summary><b>Power</b> <span class="muted">(or hold the button 5 s)</span></summary>
       <div class="sub" style="margin-top:8px">Shut down before unplugging. The board lights come back on while it shuts down; unplug once the green one stops flickering. Press the button to start it again.</div>
       <div class="row"><button id="b-reboot">Restart</button><button class="danger" id="b-poweroff">Shut down</button></div>
@@ -458,6 +471,42 @@ $("#tmdb-save").onclick = (ev) => {
 };
 $("#tmdb-clear").onclick = (ev) => {
   if (confirm("Remove the TMDb key? Films will be named from the disc label only.")) act(ev.target, async () => { await api("POST", "/api/tmdb", { api_key: "" }); await tmdbState(); }, "Removed");
+};
+
+// ---------------------------------------------------------------- Wi-Fi
+function renderWifi(w) {
+  const wf = w.wifi, eth = w.ethernet;
+  $("#wifi-state").textContent = wf.state === "connected" ? `(on ${wf.ssid || "Wi-Fi"})`
+    : w.networks.length ? `(${w.networks.length} saved, not connected)` : "(off: no networks)";
+  const link = (name, l, extra) => `${name}: ${l.state === "connected" ? `connected${extra || ""}, ${esc(l.ip || "no address")}` : esc(l.state)}`;
+  $("#wifi-links").innerHTML = [link("Ethernet", eth),
+    link("Wi-Fi", wf, wf.ssid ? ` to ${esc(wf.ssid)}${wf.signal != null ? ` (signal ${wf.signal}%)` : ""}` : "")].join("<br>");
+  $("#wifi-list").innerHTML = w.networks.length ? w.networks.map((n) => `<div class="row" style="align-items:center;margin-top:6px">
+      <span style="flex:1">${esc(n.ssid)}${n.hidden ? ' <span class="muted">(hidden)</span>' : ""}${n.connected ? ' <span class="muted">✓ connected</span>' : ""}</span>
+      <button class="small danger" data-ssid="${esc(n.ssid)}">Forget</button></div>`).join("")
+    : '<div class="empty">No saved networks.</div>';
+  $("#wifi-list").querySelectorAll("button").forEach((b) => (b.onclick = () => {
+    const ssid = b.dataset.ssid;
+    const cur = w.wifi.ssid === ssid && w.ethernet.state !== "connected";
+    if (confirm(`Forget ${ssid}?` + (cur ? " The Pi is using it and has no cable in, so this page will lose its connection." : "")))
+      act(b, async () => renderWifi(await api("POST", "/api/wifi/remove", { ssid })), "Forgotten");
+  }));
+}
+async function wifiState() { renderWifi(await api("GET", "/api/wifi")); }
+wifiState().catch(() => {});
+$("#wifi-d").ontoggle = () => { if ($("#wifi-d").open) wifiState().catch((e) => toast(e.message)); };
+$("#wifi-add").onclick = (ev) => {
+  const ssid = $("#wifi-ssid").value.trim(), password = $("#wifi-pass").value;
+  if (!ssid) { toast("Enter the network name first"); return; }
+  if (password && password.length < 8) { toast("A Wi-Fi password is at least 8 characters"); return; }
+  ev.target.textContent = "Saving…";
+  act(ev.target, async () => {
+    const w = await api("POST", "/api/wifi", { ssid, password, hidden: $("#wifi-hidden").checked });
+    $("#wifi-ssid").value = ""; $("#wifi-pass").value = ""; $("#wifi-hidden").checked = false;
+    renderWifi(w);
+    toast(w.joined === true ? `Connected to ${ssid}` : w.joined === false ? `Saved, but couldn't connect: ${w.message}`
+      : `Saved; it will be used when ${w.wifi.ssid || "the current network"} isn't available`);
+  }).finally(() => (ev.target.textContent = "Save network"));
 };
 
 // ---------------------------------------------------------------- encoding

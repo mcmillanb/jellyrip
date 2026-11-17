@@ -21,6 +21,7 @@ import discrip  # noqa: E402
 import encode  # noqa: E402
 import library  # noqa: E402
 import tmdb  # noqa: E402
+import wifi  # noqa: E402
 
 WEB = ROOT / "web"
 app = Flask(__name__, static_folder=None)
@@ -309,6 +310,38 @@ def tmdb_save():
     except tmdb.TmdbError as e:
         abort(400, str(e))
     return tmdb_status()
+
+
+@app.get("/api/wifi")
+def wifi_status():
+    """Saved Wi-Fi networks (never their passwords) and both links' state."""
+    try:
+        return jsonify(wifi.status())
+    except wifi.WifiError as e:
+        abort(500, str(e))
+
+
+@app.post("/api/wifi")
+def wifi_add():
+    """{ssid, password, hidden}: save (or replace) a network; joins it now if the Pi
+    isn't on Wi-Fi already. "password" empty = an open network."""
+    require_token()
+    b = body()
+    try:
+        return jsonify(wifi.add(str(b.get("ssid", "")), str(b.get("password", "")),
+                                bool(b.get("hidden"))))
+    except wifi.WifiError as e:
+        abort(400, str(e))
+
+
+@app.post("/api/wifi/remove")
+def wifi_remove():
+    """{ssid}: forget a saved network."""
+    require_token()
+    try:
+        return jsonify(wifi.remove(str(body().get("ssid", ""))))
+    except wifi.WifiError as e:
+        abort(400, str(e))
 
 
 @app.delete("/api/known-discs/<fp>")
