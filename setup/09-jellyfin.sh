@@ -1,7 +1,7 @@
 #!/bin/bash
 # Build step 9: Jellyfin in Docker (spec section 10).
 # Run as: sudo bash setup/09-jellyfin.sh [image-tag]   (safe to re-run; recreates the
-# container, keeps config). Web UI: http://jellyfin.local:8096
+# container, keeps config). Web UI: http://jellyfin.local (port 80 is forwarded to 8096)
 set -euo pipefail
 
 . "$(dirname "$0")/owner.sh"
@@ -32,6 +32,14 @@ docker run -d --name jellyfin \
     -v /srv/media/Music:/media/music:ro \
     "$IMAGE"
 
+echo "== port 80 -> 8096 (http://$(hostname).local without a port)"
+REPO=$(cd "$(dirname "$0")/.." && pwd)
+install -D -m 644 "$REPO/config/jellyfin-port80.nft" /etc/discrip/jellyfin-port80.nft
+install -m 644 "$REPO/systemd/jellyfin-port80.service" /etc/systemd/system/jellyfin-port80.service
+systemctl daemon-reload
+systemctl enable jellyfin-port80.service
+systemctl restart jellyfin-port80.service
+
 echo
-echo "Done. Open http://$(hostname).local:8096 and run the setup wizard. Libraries:"
+echo "Done. Open http://$(hostname).local (or :8096) and run the setup wizard. Libraries:"
 echo "  Movies -> /media/movies   Shows -> /media/tv   Music -> /media/music"

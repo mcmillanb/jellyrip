@@ -1,0 +1,17 @@
+#!/usr/sbin/nft -f
+# Port 80 -> Jellyfin (8096), so http://<hostname>.local works without a port.
+# Jellyfin itself stays on 8096 with host networking (app discovery on UDP 7359
+# needs that), and :8096 keeps working. Loaded by jellyfin-port80.service.
+# A table of its own: Docker's iptables tables are left alone.
+table inet jellyfin_port80
+delete table inet jellyfin_port80
+table inet jellyfin_port80 {
+    chain prerouting {          # from the network
+        type nat hook prerouting priority dstnat; policy accept;
+        tcp dport 80 redirect to :8096
+    }
+    chain output {              # from the Pi itself (curl http://localhost)
+        type nat hook output priority -100; policy accept;
+        oifname "lo" tcp dport 80 redirect to :8096
+    }
+}

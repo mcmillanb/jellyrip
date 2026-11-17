@@ -186,7 +186,7 @@ sudo bash setup/09-jellyfin.sh            # optional image tag, default 12.2
 
 This runs the official `jellyfin/jellyfin` image in Docker. It uses host networking so apps can discover it, and runs as your user. Config is on the data disk, and the three libraries are mounted **read-only**: only discrip and Samba write to them.
 
-Open `http://jellyfin.local:8096` and run the setup wizard. Add the libraries:
+Open `http://jellyfin.local` and run the setup wizard. Port 80 is forwarded to Jellyfin's own port, 8096, by a firewall rule (`jellyfin-port80.service`, from `config/jellyfin-port80.nft`), so `:8096` works too. Jellyfin keeps host networking, because apps find the server with a broadcast on UDP 7359, which Docker port mapping would break. Add the libraries:
 
 | Library type | Folder |
 |---|---|
