@@ -20,6 +20,11 @@
     '14.5c-2.49 0-4.5-2.01-4.5-4.5S9.51 7.5 12 7.5s4.5 2.01 4.5 4.5-2.01 4.5-4.5 4.5zm0-5.5c-.55 0-1 ' +
     '.45-1 1s.45 1 1 1 1-.45 1-1-.45-1-1-1z"/></svg>';
 
+  // Material "open_in_new" icon
+  const NEWTAB = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">' +
+    '<path fill="currentColor" d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 ' +
+    '2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>';
+
   const css = document.createElement("style");
   css.textContent = `
 .discrip-btn { display:none; align-items:center; gap:6px; margin:0 4px; padding:8px;
@@ -38,6 +43,9 @@
 .discrip-bar { display:flex; align-items:center; gap:4px; padding:4px 4px 4px 16px; flex:none;
   font:600 17px/1 -apple-system,BlinkMacSystemFont,"Noto Sans",sans-serif; }
 .discrip-bar span { flex:1; }
+.discrip-bar a { display:inline-flex; align-items:center; justify-content:center; width:44px;
+  height:44px; border-radius:50%; color:inherit; }
+.discrip-bar a:hover { background:rgba(128,128,128,.2); }
 .discrip-bar button { width:44px; height:44px; border:0; border-radius:50%; background:transparent;
   color:inherit; font-size:22px; line-height:44px; cursor:pointer; padding:0; }
 .discrip-bar button:hover { background:rgba(128,128,128,.2); }
@@ -185,6 +193,10 @@
     ov.className = "discrip-ov";
     ov.innerHTML = '<div class="discrip-panel" role="dialog" aria-label="discrip">' +
       '<div class="discrip-bar"><span>discrip</span>' +
+      // Not in Jellyfin's phone apps (window.NativeShell): a new window there
+      // opens outside the app with no way back.
+      (window.NativeShell ? "" : '<a class="discrip-tab" target="_blank" rel="noopener" ' +
+        'title="Open in a new tab" aria-label="Open in a new tab">' + NEWTAB + '</a>') +
       '<button type="button" class="discrip-x" title="Close" aria-label="Close">✕</button></div>' +
       '<iframe title="discrip"></iframe></div>';
     const panel = ov.firstChild, bar = panel.firstChild;
@@ -193,6 +205,11 @@
     bar.style.color = t.text;
     panel.querySelector("iframe").src = BASE + "/?embed=1&theme=" + encodeURIComponent(JSON.stringify(t));
     bar.querySelector(".discrip-x").onclick = close;
+    const tab = bar.querySelector(".discrip-tab");
+    if (tab) {
+      tab.href = BASE + "/";
+      tab.addEventListener("click", () => setTimeout(close, 0));
+    }
     ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
     document.body.append(ov);
     document.documentElement.style.overflow = "hidden";
