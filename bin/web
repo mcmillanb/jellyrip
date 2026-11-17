@@ -20,6 +20,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 import discrip  # noqa: E402
 import encode  # noqa: E402
 import library  # noqa: E402
+import tmdb  # noqa: E402
 
 WEB = ROOT / "web"
 app = Flask(__name__, static_folder=None)
@@ -289,6 +290,25 @@ def encode_save():
         return jsonify(encode.save_settings(cfg, body()))
     except ValueError as e:
         abort(400, str(e))
+
+
+@app.get("/api/tmdb")
+def tmdb_status():
+    """Whether a TMDb key is set (never the key itself), and where from."""
+    key, source = tmdb.get_key(cfg)
+    return jsonify(configured=bool(key), source=source,
+                   hint=f"…{key[-4:]}" if key else None)
+
+
+@app.post("/api/tmdb")
+def tmdb_save():
+    """{api_key}: checked with TMDb, then stored; "" removes the web app's key."""
+    require_token()
+    try:
+        tmdb.save_key(cfg, str(body().get("api_key", "")))
+    except tmdb.TmdbError as e:
+        abort(400, str(e))
+    return tmdb_status()
 
 
 @app.delete("/api/known-discs/<fp>")

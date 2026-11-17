@@ -152,6 +152,14 @@ pre { white-space: pre-wrap; word-break: break-all; font-size: 12px; line-height
       <div id="known"></div></details>
   </div>
   <div class="card">
+    <details id="tmdb-d"><summary><b>Film details (TMDb)</b> <span class="muted" id="tmdb-state"></span></summary>
+      <div class="sub" style="margin-top:8px">With a key from themoviedb.org (Settings → API), each film disc's label is looked up when it's ripped and filed under the film's proper title and year, e.g. <i>Up (2009)</i>, tagged with its TMDb id so Jellyfin picks the right film. Only a confident match is used (same title, running time agrees); otherwise the label is used as before.</div>
+      <label for="tmdb-key">API key or read access token</label>
+      <input type="password" id="tmdb-key" autocomplete="off" placeholder="paste the key">
+      <div class="row"><button class="primary" id="tmdb-save">Check and save</button><button class="danger" id="tmdb-clear">Remove</button></div>
+    </details>
+  </div>
+  <div class="card">
     <details id="power-d"><summary><b>Power</b> <span class="muted">(or hold the button 5 s)</span></summary>
       <div class="sub" style="margin-top:8px">Shut down before unplugging. The board lights come back on while it shuts down; unplug once the green one stops flickering. Press the button to start it again.</div>
       <div class="row"><button id="b-reboot">Restart</button><button class="danger" id="b-poweroff">Shut down</button></div>
@@ -434,6 +442,22 @@ $("#known-d").ontoggle = async () => {
   $("#known").querySelectorAll("button").forEach((b) => (b.onclick = () => {
     if (confirm("Forget this answer? The disc will ask again.")) act(b, () => api("DELETE", `/api/known-discs/${encodeURIComponent(b.dataset.fp)}`), "Forgotten").then(() => $("#known-d").ontoggle());
   }));
+};
+
+async function tmdbState() {
+  const t = await api("GET", "/api/tmdb");
+  $("#tmdb-state").textContent = t.configured
+    ? `(on, key ${t.hint}${t.source === "config" ? ", from discrip.toml" : ""})` : "(off: no key)";
+}
+tmdbState().catch(() => {});
+$("#tmdb-save").onclick = (ev) => {
+  const key = $("#tmdb-key").value.trim();
+  if (!key) { toast("Paste the key first"); return; }
+  act(ev.target, async () => { await api("POST", "/api/tmdb", { api_key: key }); $("#tmdb-key").value = ""; await tmdbState(); },
+    "TMDb key checked and saved");
+};
+$("#tmdb-clear").onclick = (ev) => {
+  if (confirm("Remove the TMDb key? Films will be named from the disc label only.")) act(ev.target, async () => { await api("POST", "/api/tmdb", { api_key: "" }); await tmdbState(); }, "Removed");
 };
 
 // ---------------------------------------------------------------- encoding

@@ -1,0 +1,156 @@
+"""Film names from TMDb (themoviedb.org) at rip time.
+
+The disc label gives a search phrase; TMDb gives the film's proper title and year,
+and its id goes in the folder name so Jellyfin matches the right film for sure:
+  Movies/Up (2009) [tmdbid-14160]/Up (2009).mkv
+Jellyfin then fetches posters, descriptions etc. itself when it scans the library.
+
+Only a confident match is used: the title must equal the search phrase (ignoring
+case, punctuation and a leading "The"/"A"/"An"), and TMDb's running time must agree
+with the disc's main title. Otherwise the caller keeps the label name, as before.
+
+The key: set in the web app (stored in state_dir/tmdb.json, 0600) or [tmdb] api_key
+in discrip.toml. Either a v3 API key or a v4 read access token works.
+"""
+import json
+import logging
+import os
+import re
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+log = logging.getLogger("tmdb")
+API = "https://api.themoviedb.org/3"
+CANDIDATES = 5  # search results whose details are fetched to compare running times
+
+
+class TmdbError(Exception):
+    pass
+
+
+# ---------------------------------------------------------------- key
+
+def _key_file(cfg):
+    return Path(cfg["paths"]["state_dir"]) / "tmdb.json"
+
+
+def get_key(cfg):
+    """(key, source): the web app's key first, then discrip.toml's; ("", None) if none."""
+    try:
+        key = json.loads(_key_file(cfg).read_text()).get("api_key", "").strip()
+        if key:
+            return key, "web"
+    except (FileNotFoundError, ValueError):
+        pass
+    key = cfg.get("tmdb", {}).get("api_key", "").strip()
+    return (key, "config") if key else ("", None)
+
+
+def save_key(cfg, key):
+    """Check the key with TMDb, then store it ("" removes it). Raises TmdbError."""
+    key = key.strip()
+    path = _key_file(cfg)
+    if not key:
+        path.unlink(missing_ok=True)
+        return
+    _get(key, "/configuration")  # raises if TMDb refuses it
+    tmp = path.with_suffix(".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump({"api_key": key}, f)
+    os.replace(tmp, path)
+
+
+# ---------------------------------------------------------------- API
+
+def _get(key, path, params=None, timeout=10):
+    params = dict(params or {})
+    headers = {"Accept": "application/json"}
+    if key.startswith("eyJ"):  # v4 read access token (a JWT)
+        headers["Authorization"] = f"Bearer {key}"
+    else:
+        params["api_key"] = key
+    url = API + path + ("?" + urllib.parse.urlencode(params) if params else "")
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers),
+                                    timeout=timeout) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise TmdbError("TMDb refused the key (401)") from None
+        raise TmdbError(f"TMDb error {e.code}") from None
+    except (OSError, ValueError) as e:
+        raise TmdbError(f"TMDb unreachable: {e}") from None
+
+
+# ---------------------------------------------------------------- matching
+
+def _norm(title):
+    t = re.sub(r"[^\w\s]", " ", title.lower().replace("&", " and "))
+    t = re.sub(r"\s+", " ", t).strip()
+    return re.sub(r"^(the|a|an) ", "", t)
+
+
+def runtime_ok(tmdb_min, disc_s):
+    """TMDb's running time (minutes) against the disc's main title (seconds). PAL
+    DVDs play 4% fast, and listed times vary, so allow 6 min or 8%."""
+    if not tmdb_min or not disc_s:
+        return False
+    disc_min = disc_s / 60
+    slack = max(6, 0.08 * tmdb_min)
+    return any(abs(disc_min - m) <= slack for m in (tmdb_min, tmdb_min * 24 / 25))
+
+
+def folder_safe(title):
+    """A title as a path component that also works over Samba (Windows/macOS):
+    'Star Wars: Episode IV' -> 'Star Wars - Episode IV'."""
+    t = re.sub(r"\s*:\s*", " - ", title)
+    t = re.sub(r'[<>"\\|?*/\x00-\x1f]', "", t)
+    return re.sub(r"\s+", " ", t).strip().rstrip(".").strip()
+
+
+def match_film(cfg, query, disc_s, year=None):
+    """The film for search phrase `query` (e.g. a tidied disc label) whose running
+    time fits a disc title of disc_s seconds, or None if no confident match.
+    Returns {"id", "title", "year", "runtime", "name", "folder"}: name is
+    'Title (Year)' for the file, folder adds '[tmdbid-N]'. Never raises."""
+    key, _ = get_key(cfg)
+    if not key or not query:
+        return None
+    lang = cfg.get("tmdb", {}).get("language", "en-GB")
+    try:
+        params = {"query": query, "include_adult": "false", "language": lang}
+        if year:
+            params["year"] = year
+        results = _get(key, "/search/movie", params).get("results", [])[:CANDIDATES]
+        want = _norm(query)
+        found = []
+        for r in results:
+            titles = {_norm(r.get("title", "")), _norm(r.get("original_title", ""))}
+            if want not in titles or not r.get("release_date"):
+                continue
+            details = _get(key, f"/movie/{r['id']}", {"language": lang})
+            if runtime_ok(details.get("runtime"), disc_s):
+                found.append((r.get("popularity") or 0, details))
+    except TmdbError as e:
+        log.warning("TMDb lookup of %r failed: %s", query, e)
+        return None
+    if not found:
+        log.info("TMDb: no film called %r with a running time near %d min",
+                 query, disc_s // 60)
+        return None
+    found.sort(key=lambda x: x[0], reverse=True)
+    if len(found) > 1 and found[1][0] > 0.5 * found[0][0]:
+        log.info("TMDb: %r is ambiguous (%s)", query,
+                 ", ".join(f"{d['title']} ({d['release_date'][:4]})" for _, d in found))
+        return None
+    d = found[0][1]
+    yr = d["release_date"][:4]
+    name = f"{folder_safe(d['title'])} ({yr})"
+    match = {"id": d["id"], "title": d["title"], "year": yr, "runtime": d.get("runtime"),
+             "name": name, "folder": f"{name} [tmdbid-{d['id']}]"}
+    log.info("TMDb: %r -> %s (id %s, %s min)", query, match["folder"], d["id"],
+             d.get("runtime"))
+    return match

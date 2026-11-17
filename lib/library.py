@@ -18,6 +18,7 @@ from pathlib import Path
 
 import discrip
 import naming
+import tmdb
 
 log = logging.getLogger("library")
 
@@ -148,11 +149,12 @@ def _place(cfg, src, dest, fp):
 # ---------------------------------------------------------------- films
 
 
-def place_film(cfg, src, name, fp=None):
-    """Move src to Movies/<name>/<name>.mkv. A file there from a different disc is
-    kept and this one is saved as '<name> - DVD.mkv' (spec 8.4: Jellyfin shows them
-    as versions). Returns the path, or None if both names are taken."""
-    folder = Path(cfg["paths"]["media"]) / "Movies" / name
+def place_film(cfg, src, name, fp=None, folder=None):
+    """Move src to Movies/<folder>/<name>.mkv (folder defaults to name; with TMDb
+    it is '<name> [tmdbid-N]'). A file there from a different disc is kept and this
+    one is saved as '<name> - DVD.mkv' (spec 8.4: Jellyfin shows them as versions).
+    Returns the path, or None if both names are taken."""
+    folder = Path(cfg["paths"]["media"]) / "Movies" / (folder or name)
     folder.mkdir(parents=True, exist_ok=True)
     for candidate in (f"{name}.mkv", f"{name} - DVD.mkv"):
         if _place(cfg, src, folder / candidate, fp):
@@ -170,13 +172,17 @@ def answer_name_film(cfg, pending_id, name):
     if not name:
         raise PlanError("empty name")
     fp = item.get("fingerprint")
-    dest = place_film(cfg, Path(item["titles"][0]["file"]), name, fp)
+    folder = None
+    match = tmdb.match_film(cfg, name, item["titles"][0].get("duration_s"))
+    if match:
+        name, folder = match["name"], match["folder"]
+    dest = place_film(cfg, Path(item["titles"][0]["file"]), name, fp, folder)
     if dest is None:
-        raise PlanError(f"Movies/{name} already has two copies")
+        raise PlanError(f"Movies/{folder or name} already has two copies")
     _remove_inbox(cfg, item["inbox_path"])
     discrip.resolve_pending(cfg, pending_id, str(dest))
     record_rip(cfg, fp, item["disc_label"], "film", [dest], pending_id)
-    remember(cfg, fp, item["disc_label"], kind="film", name=name)
+    remember(cfg, fp, item["disc_label"], kind="film", name=name, folder=folder)
     log.info("%s: filed as %s", pending_id, dest)
     jellyfin_refresh(cfg)
     return dest

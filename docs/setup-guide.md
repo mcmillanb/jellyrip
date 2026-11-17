@@ -212,6 +212,8 @@ The same key lets discrip:
 
 **Optional:** to let people download files from a browser, enable "Allow media downloads" on each user (Dashboard → Users).
 
+**Optional, recommended: film names from TMDb.** Get a free API key at themoviedb.org (Settings → API) and paste it into the web app under **More → Film details (TMDb)**. The key is checked before it's saved. Each film disc's label is then looked up when it's ripped, and a confident match (same title, and a running time that agrees with the disc) is filed as `Movies/Up (2009) [tmdbid-14160]/Up (2009).mkv`. The id in the folder name makes Jellyfin pick the right film, and Jellyfin downloads the poster and details itself. Without a key, or without a confident match, the film is named from the disc label as before. The lookup also applies when you type a name for a disc whose label is unusable.
+
 ### 9. Samba (network share)
 
 ```bash

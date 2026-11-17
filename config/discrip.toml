@@ -23,6 +23,14 @@ rip_unit = "discrip-rip.service"
 eject_when_done = true
 min_free_gb = 25         # refuse to rip below this much free space in [paths] media
 
+[tmdb]
+# Film names at rip time: the disc label is looked up on themoviedb.org and a
+# confident match (same title, running time agrees) is filed as
+# Movies/Title (Year) [tmdbid-N]/Title (Year).mkv. Set the key in the web app
+# (More -> Film details); one here is used only if the web app has none.
+api_key = ""
+language = "en-GB"         # title language (e.g. en-US)
+
 [jellyfin]
 # Ask Jellyfin to rescan after every move into the library. Its folder watcher
 # skips library folders that were empty at the last scan, so it can't be relied on.
@@ -85,7 +93,8 @@ rip_timeout = 14400
 tv_confirm = "when_unsure" # TV plans: "always" ask, ask "when_unsure", or "never" ask
 tv_lookup = true           # episode names from TVmaze (api.tvmaze.com; names only, never order)
 # Trailing words/phrases stripped from disc labels, and labels that are no name at all.
-label_noise = ["WS", "FS", "PAL", "NTSC", "DVD", "BLURAY", "BD", "R1", "R2", "UK", "SE",
+label_noise = ["WS", "FS", "PAL", "NTSC", "DVD", "BLURAY", "BD", "R1", "R2", "R4", "R0",
+               "UK", "GB", "GBR", "ENG", "EN", "EUR", "EU", "AUS", "IRL", "SE",
                "SPECIAL EDITION", "COLLECTORS EDITION", "FAM FUN EDITION",
                "FAMILY FUN EDITION", "WIDESCREEN"]
 junk_labels = ["DVD", "DVD_VIDEO", "DVDVIDEO", "DVDVOLUME", "VIDEO_TS", "LOGICAL_VOLUME_ID",

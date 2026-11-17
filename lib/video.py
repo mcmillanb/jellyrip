@@ -13,6 +13,7 @@ import library
 import makemkv
 import mkv
 import naming
+import tmdb
 
 log = logging.getLogger("video")
 BIN = Path(__file__).resolve().parent.parent / "bin"
@@ -168,18 +169,22 @@ def park(cfg, workdir, job_id):
 def file_film(cfg, job_id, label, disc_name, title, mkv, workdir, fp, known):
     vc = cfg["video"]
     name = naming.sanitise(naming.tidy_label(disc_name, vc["label_noise"]))
-    dest = None
+    dest = folder = None
     if known and known.get("kind") == "film":
-        name = known["name"]
-        log.info("known disc: named %r before", name)
+        name, folder = known["name"], known.get("folder")
+        log.info("known disc: named %r before", folder or name)
     elif naming.is_junk(disc_name, name, vc["junk_labels"]):
         log.info("label %r is junk; parking in _inbox for a name", disc_name)
         name = None
+    else:
+        match = tmdb.match_film(cfg, name, title["duration_s"])
+        if match:
+            name, folder = match["name"], match["folder"]
     if name:
-        dest = library.place_film(cfg, mkv, name, fp)
+        dest = library.place_film(cfg, mkv, name, fp, folder)
         if dest is None:
             log.warning("Movies/%s already has two copies from other discs; parking in "
-                        "_inbox", name)
+                        "_inbox", folder or name)
     discrip.update_job(cfg, title=name or disc_name)
     if dest:
         workdir.rmdir()

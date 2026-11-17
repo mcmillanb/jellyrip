@@ -74,6 +74,12 @@ DEFAULTS = {
         "off": ["ACT", "PWR"],     # board LEDs (/sys/class/leds) kept off while running
         "ethernet_off": False,     # also the Ethernet socket's LEDs (boot config, reboot)
     },
+    "tmdb": {
+        # Film names at rip time (lib/tmdb.py). The key is normally set in the web
+        # app (state_dir/tmdb.json); this one is used if the web app has none.
+        "api_key": "",
+        "language": "en-GB",       # title language (e.g. en-US)
+    },
     "jellyfin": {
         "url": "http://localhost:8096",
         "api_key": "",             # Dashboard -> API Keys; empty disables refreshes
@@ -92,7 +98,8 @@ DEFAULTS = {
         "tv_lookup": True,         # episode names from TVmaze (names only, never order)
         "tv_confirm": "when_unsure",  # always | when_unsure | never (library.settle_season)
         "label_noise": ["WS", "FS", "PAL", "NTSC", "DVD", "BLURAY", "BD", "R1", "R2",
-                        "UK", "SE", "SPECIAL EDITION", "COLLECTORS EDITION",
+                        "R4", "R0", "UK", "GB", "GBR", "ENG", "EN", "EUR", "EU", "AUS",
+                        "IRL", "SE", "SPECIAL EDITION", "COLLECTORS EDITION",
                         "FAM FUN EDITION", "FAMILY FUN EDITION", "WIDESCREEN"],
         "junk_labels": ["DVD", "DVD_VIDEO", "DVDVIDEO", "DVDVOLUME", "VIDEO_TS",
                         "LOGICAL_VOLUME_ID", "DISC", "MOVIE", "FILM", "VOLUME",
