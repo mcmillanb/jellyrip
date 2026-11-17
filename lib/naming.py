@@ -54,7 +54,11 @@ def is_junk(label, tidied, junk):
         return True
     if raw in junk or tidied.upper() in junk:
         return True
-    return bool(re.fullmatch(r"[\d\s]+", tidied))
+    if re.fullmatch(r"[\d\s]+", tidied):
+        return True
+    # A catalogue number such as EN-102989 or SKU 55231: digits and no word of
+    # three or more letters. ("Up" has no digits; "Alien 3" has a real word.)
+    return bool(re.search(r"\d", tidied)) and not re.search(r"[^\W\d_]{3,}", tidied)
 
 
 def sanitise(name):

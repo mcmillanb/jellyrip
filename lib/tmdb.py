@@ -146,6 +146,11 @@ def match_film(cfg, query, disc_s, year=None):
     key, _ = get_key(cfg)
     if not key or not query:
         return None
+    # A year at the end (MIRACLE_ON_34TH_STREET_1994, "Alien (1979)") is the
+    # release year, not part of the title: it picks between remakes.
+    m = re.fullmatch(r"(.+?)[\s_(\[-]+((?:19|20)\d\d)[)\]]?", query.strip())
+    if m and not year:
+        query, year = m.group(1), int(m.group(2))
     tried = []
     for q in (query, search_phrase(query)):  # the full name first, then without
         if q not in tried:                    # an edition tag
@@ -161,7 +166,7 @@ def _match(cfg, key, query, disc_s, year):
     try:
         params = {"query": query, "include_adult": "false", "language": lang}
         if year:
-            params["year"] = year
+            params["primary_release_year"] = year
         results = _get(key, "/search/movie", params).get("results", [])[:CANDIDATES]
         want = _loose(query)
         found = []
