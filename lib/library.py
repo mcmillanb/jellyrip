@@ -18,6 +18,7 @@ from pathlib import Path
 
 import discrip
 import naming
+import preview
 import tmdb
 
 log = logging.getLogger("library")
@@ -235,6 +236,7 @@ def answer_name_film(cfg, pending_id, name, tmdb_id=None):
         match = tmdb.match_film(cfg, name, item["titles"][0].get("duration_s"))
     if match:
         name, folder = match["name"], match["folder"]
+    preview.drop(item["titles"][0]["file"])  # before the file moves (clips are keyed by path)
     dest = place_film(cfg, Path(item["titles"][0]["file"]), name, fp, folder)
     if dest is None:
         raise PlanError(f"Movies/{folder or name} already has two copies")
@@ -579,6 +581,9 @@ def discard(cfg, pending_id):
     item = discrip.get_pending(cfg, pending_id)
     if not item:
         raise PlanError(f"no pending item {pending_id}")
+    for t in item.get("titles", []):
+        if t.get("file"):
+            preview.drop(t["file"])
     if item.get("inbox_path"):
         _remove_inbox(cfg, item["inbox_path"])
     discrip.resolve_pending(cfg, pending_id, None)

@@ -82,6 +82,10 @@ input[type=text], input[type=number], input[type=password], input[type=time] {
 .hist:first-child { border-top: none; }
 .hdet { padding: 0 0 10px; }
 .cands { margin-top: 8px; }
+dialog.play { width: min(640px, calc(100vw - 16px)); }
+.vbox { position: relative; margin-top: 10px; background: #000; border-radius: 8px; overflow: hidden; aspect-ratio: 16 / 9; }
+.vbox video { width: 100%; height: 100%; display: block; }
+.vwait { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #ddd; background: rgba(0,0,0,.55); font-size: 15px; }
 .cand { display: flex; gap: 10px; padding: 8px; border: 1px solid transparent; border-radius: 10px; cursor: pointer; }
 .cand + .cand { margin-top: 4px; }
 .cand.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--card)); }
@@ -247,6 +251,24 @@ if (window.parent !== window) {
   </div>
 
 </main>
+
+<dialog id="play-dlg" class="play"><div>
+  <div style="display:flex;align-items:center;gap:8px"><div class="title" id="play-title" style="flex:1">Preview</div>
+    <button class="small" id="play-close">Close</button></div>
+  <div class="vbox"><video id="play-v" playsinline controls preload="auto"></video><div class="vwait" id="play-wait">Preparing…</div></div>
+  <input type="range" id="play-pos" min="0" step="30" value="0" style="width:100%;margin-top:10px">
+  <div style="display:flex;align-items:center;gap:8px;margin-top:4px">
+    <button class="small" id="play-back">− 30 s</button>
+    <span class="sub" id="play-time" style="flex:1;text-align:center">0:00</span>
+    <button class="small" id="play-fwd">+ 30 s</button>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <button class="small" data-jump="0.02">Start</button><button class="small" data-jump="0.25">¼</button>
+    <button class="small" data-jump="0.5">½</button><button class="small" data-jump="0.75">¾</button>
+    <button class="small" data-jump="0.97">End credits</button>
+  </div>
+  <div class="sub" style="margin-top:8px">A low-quality preview, made 30 s at a time from the rip. The title usually shows in the first few minutes.</div>
+</div></dialog>
 
 <dialog id="power-dlg"><div>
   <div class="title">Restart or shut down?</div>
@@ -464,7 +486,8 @@ function filmCard(el, p) {
     <div style="display:flex;gap:8px"><input type="text" name="name" value="${esc(p.suggested.name || "")}" placeholder="Film name" enterkeyhint="search" style="flex:1">
       <button data-a="look">Look up</button></div>
     <div class="cands"></div>
-    <div class="row"><button class="primary" data-a="ok">Save</button><button class="danger small" data-a="discard">Discard rip</button></div>`;
+    <div class="row"><button class="primary" data-a="ok">Save</button><button data-a="play">▶ Preview</button><button class="danger small" data-a="discard">Discard rip</button></div>`;
+  el.querySelector("[data-a=play]").onclick = () => player(p.id, 0, disc, p.disc_label || "this disc");
   const input = el.querySelector("[name=name]"), cands = el.querySelector(".cands"),
         ok = el.querySelector("[data-a=ok]");
   let pick = null;  // the chosen TMDb film, or null = use the name as typed
@@ -807,6 +830,54 @@ $("#b-pcancel").onclick = () => $("#power-dlg").close();
 $("#power-dlg").addEventListener("click", (e) => { if (e.target === $("#power-dlg")) $("#power-dlg").close(); });
 $("#b-reboot").onclick = (ev) => power(ev.target, "reboot");
 $("#b-poweroff").onclick = (ev) => power(ev.target, "poweroff");
+
+// ---------------------------------------------------------------- preview player
+// Plays a parked rip 30 s at a time (/api/pending/<id>/clip makes each clip); the
+// next clip is made in the background while one plays, and follows on by itself.
+const CLIP = 30;
+const play = { pid: null, title: 0, dur: 0, start: 0 };
+const clipUrl = (t) => `/api/pending/${encodeURIComponent(play.pid)}/clip?title=${play.title}&t=${t}`;
+function playAt(t, autoplay = true) {
+  const v = $("#play-v");
+  play.start = Math.max(0, Math.min(Math.floor(t / CLIP) * CLIP, Math.max(0, Math.floor((play.dur - 1) / CLIP) * CLIP)));
+  $("#play-pos").value = play.start;
+  $("#play-wait").textContent = "Preparing…"; $("#play-wait").hidden = false;
+  v.src = clipUrl(play.start);
+  v.onloadeddata = () => {
+    $("#play-wait").hidden = true;
+    if (autoplay) v.play().catch(() => {});
+    const next = play.start + CLIP;  // make the next clip while this one plays
+    if (next < play.dur) fetch(clipUrl(next), { cache: "force-cache" }).catch(() => {});
+  };
+  v.onerror = () => { $("#play-wait").textContent = "Couldn't make the preview."; };
+  showTime();
+}
+function showTime() {
+  const v = $("#play-v"), now = play.start + (v.currentTime || 0);
+  $("#play-time").textContent = `${hms(Math.floor(now))} / ${hms(play.dur)}`;
+}
+function player(pid, title, dur, name) {
+  Object.assign(play, { pid, title, dur });
+  $("#play-title").textContent = "Preview: " + name;
+  $("#play-pos").max = Math.max(0, Math.floor((dur - 1) / CLIP) * CLIP);
+  $("#play-dlg").showModal();
+  playAt(0);
+}
+$("#play-v").ontimeupdate = showTime;
+$("#play-v").onended = () => { if (play.start + CLIP < play.dur) playAt(play.start + CLIP); };
+$("#play-pos").onchange = (e) => playAt(+e.target.value);
+$("#play-pos").oninput = (e) => { $("#play-time").textContent = `${hms(+e.target.value)} / ${hms(play.dur)}`; };
+$("#play-back").onclick = () => playAt(play.start + ($("#play-v").currentTime || 0) - CLIP);
+$("#play-fwd").onclick = () => playAt(play.start + ($("#play-v").currentTime || 0) + CLIP);
+document.querySelectorAll("[data-jump]").forEach((b) => (b.onclick = () => playAt(play.dur * +b.dataset.jump)));
+function closePlayer() {
+  const v = $("#play-v");
+  v.pause(); v.removeAttribute("src"); v.load();
+  if ($("#play-dlg").open) $("#play-dlg").close();
+}
+$("#play-close").onclick = closePlayer;
+$("#play-dlg").addEventListener("close", closePlayer);
+$("#play-dlg").addEventListener("click", (e) => { if (e.target === $("#play-dlg")) closePlayer(); });
 
 // ---------------------------------------------------------------- sections
 // Open/closed state of the main sections, remembered on this device.

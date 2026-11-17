@@ -13,13 +13,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-from flask import Flask, abort, jsonify, request, send_from_directory
+from flask import Flask, abort, jsonify, request, send_file, send_from_directory
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "lib"))
 import discrip  # noqa: E402
 import encode  # noqa: E402
 import library  # noqa: E402
+import preview  # noqa: E402
 import tmdb  # noqa: E402
 import wifi  # noqa: E402
 
@@ -165,6 +166,29 @@ def preview(pid):
             int(a["year"]) if a.get("year") else None))
     except (library.PlanError, ValueError) as e:
         abort(400, str(e))
+
+
+@app.get("/api/pending/<pid>/clip")
+def pending_clip(pid):
+    """?title=N&t=SECONDS: a 30 s browser-playable clip of a parked rip's title,
+    starting at t (rounded down to 30 s), for checking what film it is."""
+    item = discrip.get_pending(cfg, pid)
+    if not item:
+        abort(404, "no such prompt")
+    try:
+        title = item["titles"][int(request.args.get("title", 0))]
+        t = float(request.args.get("t", 0))
+    except (IndexError, ValueError):
+        abort(400, "bad title or time")
+    if not title.get("file") or not Path(title["file"]).exists():
+        abort(404, "that title isn't ripped")
+    try:
+        path = preview.clip(title["file"], min(t, max(0, (title.get("duration_s") or 0) - 1)))
+    except (RuntimeError, OSError, subprocess.TimeoutExpired) as e:
+        abort(500, f"couldn't make a preview: {e}")
+    resp = send_file(path, mimetype="video/mp4", conditional=True)
+    resp.headers["Cache-Control"] = "private, max-age=600"
+    return resp
 
 
 @app.get("/api/encode")
