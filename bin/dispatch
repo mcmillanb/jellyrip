@@ -124,6 +124,31 @@ def take_rerip_flag(cfg):
     return True
 
 
+READ_ATTEMPTS = 3
+READ_RETRY_WAIT = 20  # s
+
+
+def read_filesystem(cfg, dev):
+    """blkid of a data disc. The drive can say a disc is ready before it can read
+    it: every read is then refused, even sector 0 ("LBA out of range"), and
+    re-inserting the same disc works. So if nothing is readable, wait and retry."""
+    for attempt in range(1, READ_ATTEMPTS + 1):
+        rc, out = run(["blkid", "-p", "-o", "export", dev])[:2]
+        fs = export_vars(out)
+        if fs.get("TYPE") or attempt == READ_ATTEMPTS:
+            return fs
+        log.warning("disc not readable yet (blkid rc=%s); trying again in %d s "
+                    "(%d of %d)", rc, READ_RETRY_WAIT, attempt + 1, READ_ATTEMPTS)
+        discrip.update_job(cfg, detail="Disc not readable yet; trying again")
+        time.sleep(READ_RETRY_WAIT)
+        try:
+            if discrip.drive_status(dev) != discrip.CDS_DISC_OK:
+                log.info("disc removed while waiting")
+                return {}
+        except OSError:
+            return {}
+
+
 def rip(cfg, dev, job_id):
     """Detect and rip the disc. Returns (result, error, output)."""
     if not wait_ready(dev, cfg["drive"]["ready_timeout"]):
@@ -136,7 +161,7 @@ def rip(cfg, dev, job_id):
     media = classify(cd)
     fs = {}
     if media in ("dvd", "bluray", "data_cd"):
-        fs = export_vars(run(["blkid", "-p", "-o", "export", dev])[1])
+        fs = read_filesystem(cfg, dev)
     label = fs.get("LABEL")
     log.info("media=%s label=%s uuid=%s fstype=%s audio_tracks=%s data_tracks=%s",
              media, label, fs.get("UUID"), fs.get("TYPE"),
