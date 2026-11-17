@@ -41,6 +41,7 @@ header h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
 .chip { font-size: 13px; padding: 4px 10px; border-radius: 999px; background: var(--card);
         border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
 .chip.temp { cursor: pointer; }
+label.check .note { font-size: 13px; color: var(--accent); }
 .chip.ok { color: var(--ok); } .chip.warn { color: var(--warn); } .chip.bad { color: var(--bad); }
 .banner { border-radius: 12px; padding: 10px 14px; margin-bottom: 10px; font-size: 15px; }
 .banner.warn { background: var(--warn-bg); color: var(--warn); }
@@ -534,13 +535,24 @@ function filmCard(el, p) {
   };
 }
 
+function titleInfo(t) {
+  // Scanned before the disc's streams were recorded: nothing more to show.
+  if (!t.audio) return "";
+  const parts = [];
+  if (t.aspect) parts.push(t.aspect);
+  parts.push(t.audio.length ? "Audio: " + t.audio.join(", ") : "No audio");
+  parts.push(t.subs.length ? "Subtitles: " + t.subs.join(", ") : "No subtitles");
+  const notes = (t.notes || []).length ? `<div class="note">${esc(t.notes.join(" · "))}</div>` : "";
+  return `<div class="sub">${esc(parts.join(" · "))}</div>${notes}`;
+}
 function chooseCard(el, p) {
   const picked = p.answer;
+  const ticked = picked ? picked.titles : (p.suggested && p.suggested.titles) || [];
   el.innerHTML = `
     <div class="title">Which titles?</div>
     <div class="sub">${esc(p.disc_label || "Disc")}: not sure what this disc is. ${picked ? "Choice saved: it rips when the disc is in." : "The disc stays in the drive."}</div>
-    ${p.titles.map((t) => `<label class="check"><input type="checkbox" value="${t.index}" ${picked && picked.titles.includes(t.index) ? "checked" : ""}>
-      <span>Title ${t.index} · ${hms(t.duration_s)} · ${(t.size / 1e9).toFixed(1)} GB · ${t.chapters} ch</span></label>`).join("")}
+    ${p.titles.map((t) => `<label class="check"><input type="checkbox" value="${t.index}" ${ticked.includes(t.index) ? "checked" : ""}>
+      <span>Title ${t.index} · ${hms(t.duration_s)} · ${(t.size / 1e9).toFixed(1)} GB · ${t.chapters} ch${titleInfo(t)}</span></label>`).join("")}
     <div class="row">
       <span class="seg"><label><input type="radio" name="k-${p.id}" value="film" checked><span>Film</span></label><label><input type="radio" name="k-${p.id}" value="tv" ${picked && picked.kind === "tv" ? "checked" : ""}><span>Episodes</span></label></span>
     </div>

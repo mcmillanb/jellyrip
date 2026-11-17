@@ -22,6 +22,10 @@ A_NAME, A_CHAPTERS, A_DURATION, A_SIZE_BYTES = 2, 8, 9, 11
 NOISY_MSGS = re.compile(r"less than minimum title length|is identical to stream|"
                         r"looks empty and was skipped|were removed from title")
 A_SOURCE_FILE, A_SEGMENTS_MAP, A_OUTPUT_FILE, A_VOLUME_NAME = 16, 26, 27, 32
+# Stream (SINFO) attributes. The type is matched on its message code (field 2),
+# since the text is translated.
+S_TYPE, S_NAME, S_LANG, S_CODEC, S_ASPECT, S_CHANNELS = 1, 2, 4, 7, 20, 40
+VIDEO, AUDIO, SUBTITLES = "6201", "6202", "6203"
 
 
 def parse_line(line):
@@ -45,6 +49,7 @@ class Info:
     def __init__(self):
         self.disc = {}
         self.titles = {}
+        self.streams = {}  # title -> stream -> {attr: value}; attr S_TYPE holds the code
         self.messages = []
         self.version = None
 
@@ -53,6 +58,10 @@ class Info:
             self.disc[int(f[0])] = f[2]
         elif kind == "TINFO":
             self.titles.setdefault(int(f[0]), {})[int(f[1])] = f[3]
+        elif kind == "SINFO":
+            # SINFO:title,stream,attr,code,"value"; for the type, keep the code
+            a = self.streams.setdefault(int(f[0]), {}).setdefault(int(f[1]), {})
+            a[int(f[2])] = f[3] if int(f[2]) == S_TYPE else f[4]
         elif kind == "MSG":
             self.messages.append((int(f[0]), f[3]))
             if f[0] == "1005":
@@ -74,8 +83,27 @@ class Info:
                 "source": a.get(A_SOURCE_FILE),
                 "segments": a.get(A_SEGMENTS_MAP),
                 "output": a.get(A_OUTPUT_FILE),
+                **self.tracks(i),
             })
         return out
+
+    def tracks(self, i):
+        """{aspect, audio: [labels], subs: [languages]} of title i, for the picker."""
+        aspect, audio, subs = None, [], []
+        for _, a in sorted(self.streams.get(i, {}).items()):
+            kind, lang = a.get(S_TYPE), a.get(S_LANG) or "?"
+            if kind == VIDEO and not aspect:
+                aspect = a.get(S_ASPECT)
+            elif kind == AUDIO:
+                ch = a.get(S_CHANNELS, "").replace("(side)", "")
+                label = " ".join(x for x in (lang, ch, a.get(S_CODEC)) if x)
+                name = a.get(S_NAME, "")
+                if re.search(r"comment", name, re.I):
+                    label += " (commentary)"
+                audio.append(label)
+            elif kind == SUBTITLES:
+                subs.append(a.get(S_LANG) or "no language")
+        return {"aspect": aspect, "audio": audio, "subs": subs}
 
 
 def run(args, on_line=None, timeout=None):

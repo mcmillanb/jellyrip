@@ -69,6 +69,33 @@ def playall_subset(playall, cluster, min_titles, tolerance=0.02):
     return None
 
 
+def title_notes(titles):
+    """Hints for the choose_titles picker: {index: [notes]}, and the titles to tick
+    (when the doubt is only between copies of the same film, the copy with the most
+    audio and subtitle tracks)."""
+    notes = {t["index"]: [] for t in titles}
+    longest = max((t["duration_s"] for t in titles), default=0)
+    groups = {}
+    for t in titles:
+        if t.get("segments") and t["duration_s"] >= longest / 2:
+            groups.setdefault(t["segments"], []).append(t)
+        if t["duration_s"] < longest / 2:
+            notes[t["index"]].append("probably an extra")
+    for same in groups.values():
+        for t in same[1:]:
+            notes[t["index"]].append(f"same scenes as title {same[0]['index']}")
+        tracks = lambda t: len(t.get("audio", [])) + len(t.get("subs", []))
+        ranked = sorted(same, key=tracks, reverse=True)
+        if len(same) > 1 and tracks(ranked[0]) > tracks(ranked[1]):
+            notes[ranked[0]["index"]].append("most audio and subtitle tracks")
+    tick = []
+    if len(groups) == 1:
+        (same,) = groups.values()
+        best = [n for n in notes if "most audio and subtitle tracks" in notes[n]]
+        tick = best or [same[0]["index"]]
+    return notes, tick
+
+
 class Progress:
     """Turns PRGV/PRGT/PRGC lines into throttled job state updates.
 
@@ -317,15 +344,19 @@ def rip_dvd(cfg, dev, job_id, label, uuid=None, force=False):
         return "error", f"no title longer than {vc['minlength']} s", None, True
     if kind == "ambiguous":
         # Spec 7.1.1: don't guess. List the titles for the user; leave the disc in.
+        listed = [t for t in titles if t["duration_s"] >= vc["minlength"]]
+        notes, tick = title_notes(listed)
         discrip.add_pending(cfg, {
             "id": job_id,
             "prompt": "choose_titles",
             "disc_label": label,
             "fingerprint": fp,
-            "suggested": {},
+            "suggested": {"titles": tick, "kind": "film"} if tick else {},
             "titles": [{"index": t["index"], "duration_s": t["duration_s"],
-                        "size": t["size"], "chapters": t["chapters"]}
-                       for t in titles if t["duration_s"] >= vc["minlength"]],
+                        "size": t["size"], "chapters": t["chapters"],
+                        "aspect": t.get("aspect"), "audio": t.get("audio", []),
+                        "subs": t.get("subs", []), "notes": notes[t["index"]]}
+                       for t in listed],
             "inbox_path": None,
         })
         return "skipped", "not sure which titles to rip: choose them", None, False
