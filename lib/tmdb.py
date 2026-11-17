@@ -6,7 +6,7 @@ and its id goes in the folder name so Jellyfin matches the right film for sure:
 Jellyfin then fetches posters, descriptions etc. itself when it scans the library.
 
 Only a confident match is used: the title must equal the search phrase (ignoring
-case, punctuation and a leading "The"/"A"/"An"), and TMDb's running time must agree
+case, punctuation and the small words the/a/an/and/of), and TMDb's running time must agree
 with the disc's main title. Otherwise the caller keeps the label name, as before.
 
 The key: set in the web app (stored in state_dir/tmdb.json, 0600) or [tmdb] api_key
@@ -93,6 +93,15 @@ def _norm(title):
     return re.sub(r"^(the|a|an) ", "", t)
 
 
+SMALL_WORDS = {"the", "a", "an", "and", "of"}
+
+
+def _loose(title):
+    """_norm without small words: disc labels often drop them
+    (MONTY_PYTHON_THE_HOLY_GRAIL for 'Monty Python and the Holy Grail')."""
+    return " ".join(w for w in _norm(title).split() if w not in SMALL_WORDS)
+
+
 def runtime_ok(tmdb_min, disc_s):
     """TMDb's running time (minutes) against the disc's main title (seconds). PAL
     DVDs play 4% fast, and listed times vary, so allow 6 min or 8%."""
@@ -125,11 +134,11 @@ def match_film(cfg, query, disc_s, year=None):
         if year:
             params["year"] = year
         results = _get(key, "/search/movie", params).get("results", [])[:CANDIDATES]
-        want = _norm(query)
+        want = _loose(query)
         found = []
         for r in results:
-            titles = {_norm(r.get("title", "")), _norm(r.get("original_title", ""))}
-            if want not in titles or not r.get("release_date"):
+            titles = {_loose(r.get("title", "")), _loose(r.get("original_title", ""))}
+            if not want or want not in titles or not r.get("release_date"):
                 continue
             details = _get(key, f"/movie/{r['id']}", {"language": lang})
             if runtime_ok(details.get("runtime"), disc_s):
