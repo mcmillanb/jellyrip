@@ -40,6 +40,7 @@ header h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
 .chips { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 .chip { font-size: 13px; padding: 4px 10px; border-radius: 999px; background: var(--card);
         border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.chip.temp { cursor: pointer; }
 .chip.ok { color: var(--ok); } .chip.warn { color: var(--warn); } .chip.bad { color: var(--bad); }
 .banner { border-radius: 12px; padding: 10px 14px; margin-bottom: 10px; font-size: 15px; }
 .banner.warn { background: var(--warn-bg); color: var(--warn); }
@@ -191,15 +192,6 @@ if (window.parent !== window) {
     <div class="title" id="enc-title">…</div>
     <div class="sub" id="enc-sub"></div>
     <div class="bar" id="enc-bar" hidden><div></div></div>
-    <details id="temp-d" style="margin-top:10px"><summary class="muted">CPU temperature</summary>
-      <span class="seg" style="margin-top:8px">
-        <label><input type="radio" name="temp-h" value="12"><span>12 h</span></label>
-        <label><input type="radio" name="temp-h" value="24" checked><span>24 h</span></label>
-        <label><input type="radio" name="temp-h" value="168"><span>7 days</span></label>
-      </span>
-      <svg id="temp-chart" viewBox="0 0 320 140" style="width:100%;height:auto;margin-top:8px;display:block" role="img" aria-label="CPU temperature chart"></svg>
-      <div class="sub" id="temp-sum"></div>
-    </details>
    </div>
    </details>
   </div>
@@ -251,6 +243,18 @@ if (window.parent !== window) {
   </div>
 
 </main>
+
+<dialog id="temp-dlg" class="play"><div>
+  <div style="display:flex;align-items:center;gap:8px"><div class="title" style="flex:1">CPU temperature</div>
+    <button class="small" id="temp-close">Close</button></div>
+  <div style="margin-top:8px"><span class="seg" style="margin-top:8px">
+        <label><input type="radio" name="temp-h" value="12"><span>12 h</span></label>
+        <label><input type="radio" name="temp-h" value="24" checked><span>24 h</span></label>
+        <label><input type="radio" name="temp-h" value="168"><span>7 days</span></label>
+      </span>
+      <svg id="temp-chart" viewBox="0 0 320 140" style="width:100%;height:auto;margin-top:8px;display:block" role="img" aria-label="CPU temperature chart"></svg>
+      <div class="sub" id="temp-sum"></div></div>
+</div></dialog>
 
 <dialog id="play-dlg" class="play"><div>
   <div style="display:flex;align-items:center;gap:8px"><div class="title" id="play-title" style="flex:1">Preview</div>
@@ -345,7 +349,7 @@ let last = null;
 function renderChips(s) {
   const d = s.state.drive || {}, h = s.health;
   const [txt, cls] = DRIVE[d.status] || ["Drive ?", "warn"];
-  const temp = h.temp_c == null ? "" : `<span class="chip ${h.temp_c >= 75 ? "bad" : h.temp_c >= 65 ? "warn" : ""}">${h.temp_c} °C</span>`;
+  const temp = h.temp_c == null ? "" : `<span class="chip temp ${h.temp_c >= 75 ? "bad" : h.temp_c >= 65 ? "warn" : ""}" role="button" tabindex="0" title="Temperature history">${h.temp_c} °C</span>`;
   const free = h.free_gb == null ? "" : `<span class="chip ${h.free_gb < h.min_free_gb ? "bad" : ""}">${Math.round(h.free_gb)} GB free</span>`;
   $("#chips").innerHTML = `<span class="chip ${cls}">${esc(txt)}</span>${temp}${free}`;
 }
@@ -721,7 +725,7 @@ function renderEncode(s) {
 // CPU temperature log: shaded where an encode was running, dashed line at the
 // pause limit. Refreshed every minute while open.
 async function drawTemps() {
-  if (!$("#temp-d").open) return;
+  if (!$("#temp-dlg").open) return;
   const hours = +document.querySelector("input[name=temp-h]:checked").value;
   const { samples, max_temp } = await api("GET", `/api/temps?hours=${hours}`);
   const svg = $("#temp-chart");
@@ -776,7 +780,11 @@ async function drawTemps() {
     (samples.some((p) => p.state === "hot") ? ` · paused about ${samples.filter((p) => p.state === "hot").length} min for heat (red)` : "") +
     ` · pauses at ${max_temp} °C` + (capped ? " · the Pi throttled itself in this period" : "");
 }
-$("#temp-d").ontoggle = drawTemps;
+// The temperature chip at the top opens the chart.
+$("#chips").addEventListener("click", (e) => { if (e.target.closest(".chip.temp")) { $("#temp-dlg").showModal(); drawTemps(); } });
+$("#chips").addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.closest(".chip.temp")) { $("#temp-dlg").showModal(); drawTemps(); } });
+$("#temp-close").onclick = () => $("#temp-dlg").close();
+$("#temp-dlg").addEventListener("click", (e) => { if (e.target === $("#temp-dlg")) $("#temp-dlg").close(); });
 document.querySelectorAll("input[name=temp-h]").forEach((r) => r.onchange = drawTemps);
 setInterval(drawTemps, 60e3);
 
